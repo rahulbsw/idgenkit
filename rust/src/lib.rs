@@ -1,8 +1,11 @@
-//! Dependency-free ULID, Snowflake and Nano ID generators.
+//! Dependency-free ULID, UUIDv4/v7, Snowflake and Nano ID generators.
 //!
 //! ```
 //! let id = idgenkit::ulid::Ulid::new().to_string();
 //! assert_eq!(id.len(), 26);
+//!
+//! let u = idgenkit::uuid::Uuid::new_v7().unwrap();
+//! assert_eq!(u.version(), 7);
 //!
 //! let sf = idgenkit::snowflake::Snowflake::new(1, 0).unwrap();
 //! assert!(sf.next_id().unwrap() > 0);
@@ -14,6 +17,7 @@ pub mod nanoid;
 pub mod rng;
 pub mod snowflake;
 pub mod ulid;
+pub mod uuid;
 
 use std::fmt;
 
@@ -29,6 +33,8 @@ pub enum Error {
     Sequence,
     Alphabet,
     Size,
+    InvalidUuid,
+    NotUuidV7,
 }
 
 impl fmt::Display for Error {
@@ -38,11 +44,13 @@ impl fmt::Display for Error {
             Error::InvalidChar => "invalid ULID character",
             Error::Overflow => "ULID overflows 128 bits",
             Error::TimeRange => "timestamp out of range",
-            Error::MonotonicOverflow => "monotonic ULID random component overflow",
+            Error::MonotonicOverflow => "monotonic random component overflow",
             Error::MachineId => "machine id must be in [0, 1023]",
             Error::Sequence => "sequence must be in [0, 4095]",
             Error::Alphabet => "alphabet must contain between 1 and 256 symbols",
             Error::Size => "size must be >= 1",
+            Error::InvalidUuid => "UUID must be 36 characters in 8-4-4-4-12 hex form",
+            Error::NotUuidV7 => "not a version 7 UUID",
         })
     }
 }

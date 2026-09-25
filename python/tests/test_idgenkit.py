@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import threading
+import time
 import unittest
 import uuid
 
@@ -13,12 +14,16 @@ from idgenkit import (  # noqa: E402
     ULID,
     URL_ALPHABET,
     MonotonicULID,
+    MonotonicUUID7,
     Snowflake,
     custom_alphabet,
     custom_random,
     nanoid,
+    uuid4,
+    uuid7,
+    uuid7_timestamp,
 )
-from idgenkit import snowflake, ulid  # noqa: E402
+from idgenkit import snowflake, ulid, uuids  # noqa: E402
 
 
 def vectors(name):
@@ -123,6 +128,87 @@ def scripted_clock(readings):
         return values.pop(0) if len(values) > 1 else values[0]
 
     return clock
+
+
+class UUIDTest(unittest.TestCase):
+    def test_vectors(self):
+        rows = vectors("uuid.txt")
+        self.assertGreater(len(rows), 10)
+        for row in rows:
+            kind, want = row[0], row[-1]
+            if want == "error":
+                with self.assertRaises(ValueError, msg=row):
+                    uuids.uuid7_from_parts(int(row[1]), bytes.fromhex(row[2]))
+                continue
+            if kind == "v4":
+                u = uuids.uuid4_from_bytes(bytes.fromhex(row[1]))
+            else:
+                u = uuids.uuid7_from_parts(int(row[1]), bytes.fromhex(row[2]))
+            self.assertEqual(str(u), want)
+            self.assertEqual(uuids.parse(want), u)
+            self.assertEqual(uuids.parse(want.upper()), u)
+            self.assertEqual((u.version, u.variant), (int(kind[1]), uuid.RFC_4122))
+            if kind == "v7":
+                self.assertEqual(uuid7_timestamp(u), int(row[1]))
+            else:
+                with self.assertRaises(ValueError):
+                    uuid7_timestamp(u)
+
+    def test_invalid(self):
+        with open(os.path.join(TESTDATA, "uuid_invalid.txt")) as f:
+            rows = [line.rstrip("\n")[1:-1] for line in f if not line.startswith("#")]
+        self.assertGreater(len(rows), 10)
+        for text in rows:
+            with self.assertRaises(ValueError, msg=repr(text)):
+                uuids.parse(text)
+        with self.assertRaises(ValueError):
+            uuids.parse("017f22e2-79b0-7cc3-98c4-dc0c0c07398\uff10")
+
+    def test_generate(self):
+        now = int(time.time() * 1000)
+        values = [f() for _ in range(10000) for f in (uuid4, uuid7)]
+        self.assertEqual(len(set(values)), 20000)
+        self.assertTrue(all(isinstance(u, uuid.UUID) and u.variant == uuid.RFC_4122 for u in values))
+        self.assertEqual({u.version for u in values}, {4, 7})
+        self.assertLess(abs(uuid7_timestamp(uuid7()) - now), 5000)
+        with self.assertRaises(ValueError):
+            uuids.uuid7_from_parts(-1, bytes(10))
+
+    def test_monotonic(self):
+        gen = MonotonicUUID7()
+        ids = [gen.next() for _ in range(50000)]
+        self.assertTrue(all(a.bytes < b.bytes for a, b in zip(ids, ids[1:])))
+        self.assertEqual([str(u) for u in ids], sorted(str(u) for u in ids))
+        seen, threads = [], []
+        for _ in range(8):
+            t = threading.Thread(target=lambda: seen.extend(gen.next() for _ in range(5000)))
+            threads.append(t)
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(len(set(seen)), 40000)
+
+    def test_monotonic_vectors(self):
+        rows = vectors("uuid7_monotonic.txt")
+        self.assertGreater(len(rows), 10)
+        gen = MonotonicUUID7()
+        for row in rows:
+            if row[0] == "reset":
+                gen = MonotonicUUID7()
+                continue
+            now, rnd, want = int(row[1]), row[2], row[3]
+            drew = []
+
+            def source(n, rnd=rnd):
+                drew.append(n)
+                return bytes(n) if rnd == "-" else bytes.fromhex(rnd)
+
+            if want == "error":
+                with self.assertRaises((ValueError, OverflowError), msg=row):
+                    gen._next_at(now, source)
+            else:
+                self.assertEqual(str(gen._next_at(now, source)), want, row)
+            self.assertFalse(rnd == "-" and drew, f"{row}: drew randomness")
 
 
 class SnowflakeTest(unittest.TestCase):

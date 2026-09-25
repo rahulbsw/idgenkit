@@ -4,6 +4,7 @@ use std::thread;
 use idgenkit::nanoid::{self, CustomAlphabet, URL_ALPHABET};
 use idgenkit::snowflake::{self, Snowflake};
 use idgenkit::ulid::{MonotonicGenerator, Ulid, MAX_TIME};
+use idgenkit::uuid::{MonotonicV7Generator, Uuid};
 use idgenkit::Error;
 
 fn vectors(name: &str) -> Vec<Vec<String>> {
@@ -69,6 +70,74 @@ fn ulid_monotonic_concurrent() {
         })
         .collect();
     let all: HashSet<Ulid> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
+    assert_eq!(all.len(), 40_000);
+}
+
+#[test]
+fn uuid_vectors() {
+    let rows = vectors("uuid.txt");
+    assert!(rows.len() > 10);
+    for r in rows {
+        let want = r.last().unwrap();
+        let (u, ms) = match r[0].as_str() {
+            "v4" => (Ok(Uuid::v4_from_bytes(hex(&r[1]).try_into().unwrap())), None),
+            "v7" => {
+                let ms: u64 = r[1].parse().unwrap();
+                (Uuid::v7_from_parts(ms, hex(&r[2]).try_into().unwrap()), Some(ms))
+            }
+            other => panic!("bad line kind {other}"),
+        };
+        if want == "error" {
+            assert_eq!(u, Err(Error::TimeRange), "{r:?}");
+            continue;
+        }
+        let u = u.unwrap();
+        assert_eq!(&u.to_string(), want);
+        let p: Uuid = want.parse().unwrap();
+        assert_eq!(p, u);
+        assert_eq!(Uuid::parse(&want.to_uppercase()), Ok(u));
+        assert_eq!(Uuid::from_bytes(u.to_bytes()), u);
+        assert_eq!(p.version().to_string(), r[0][1..]);
+        assert_eq!(p.timestamp_ms().ok(), ms);
+    }
+}
+
+#[test]
+fn uuid_invalid() {
+    let path = format!("{}/../testdata/uuid_invalid.txt", env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(path).unwrap();
+    let rows: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).map(|l| &l[1..l.len() - 1]).collect();
+    assert!(rows.len() > 10);
+    for s in rows {
+        assert_eq!(Uuid::parse(s), Err(Error::InvalidUuid), "{s:?} should fail");
+    }
+    assert_eq!(Uuid::new_v4().timestamp_ms(), Err(Error::NotUuidV7));
+}
+
+#[test]
+fn uuid_generate() {
+    let set: HashSet<Uuid> = (0..10_000).flat_map(|_| [Uuid::new_v4(), Uuid::new_v7().unwrap()]).collect();
+    assert_eq!(set.len(), 20_000);
+    assert!(set.iter().all(|u| matches!(u.version(), 4 | 7) && u.to_bytes()[8] & 0xC0 == 0x80));
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let ts = Uuid::new_v7().unwrap().timestamp_ms().unwrap();
+    assert!((now..now + 5000).contains(&ts));
+}
+
+#[test]
+fn uuid_monotonic() {
+    let g = Arc::new(MonotonicV7Generator::new());
+    let ids: Vec<Uuid> = (0..50_000).map(|_| g.next().unwrap()).collect();
+    assert!(ids.windows(2).all(|w| w[0] < w[1]));
+    let strs: Vec<String> = ids.iter().map(|u| u.to_string()).collect();
+    assert!(strs.windows(2).all(|w| w[0] < w[1]));
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let g = g.clone();
+            thread::spawn(move || (0..5000).map(|_| g.next().unwrap()).collect::<Vec<_>>())
+        })
+        .collect();
+    let all: HashSet<Uuid> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
     assert_eq!(all.len(), 40_000);
 }
 

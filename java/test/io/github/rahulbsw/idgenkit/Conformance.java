@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
@@ -25,6 +26,11 @@ public final class Conformance {
         run("ulidMonotonicOverflow", Conformance::ulidMonotonicOverflow);
         run("ulidMonotonicConcurrent", Conformance::ulidMonotonicConcurrent);
         run("ulidMonotonicVectors", Conformance::ulidMonotonicVectors);
+        run("uuidVectors", Conformance::uuidVectors);
+        run("uuidInvalid", Conformance::uuidInvalid);
+        run("uuidGenerate", Conformance::uuidGenerate);
+        run("uuidMonotonic", Conformance::uuidMonotonic);
+        run("uuidMonotonicVectors", Conformance::uuidMonotonicVectors);
         run("snowflakeVectors", Conformance::snowflakeVectors);
         run("snowflakeSequenceVectors", Conformance::snowflakeSequenceVectors);
         run("snowflakeValidation", Conformance::snowflakeValidation);
@@ -100,6 +106,113 @@ public final class Conformance {
             MonotonicUlid gen = g;
             Runnable step = () -> {
                 Ulid u = gen.next(Long.parseLong(r[1]), buf -> {
+                    drew[0] = true;
+                    if (!r[2].equals("-")) {
+                        System.arraycopy(hex(r[2]), 0, buf, 0, buf.length);
+                    }
+                });
+                check(u.toString().equals(r[3]), where + ": got " + u);
+            };
+            if (r[3].equals("error")) {
+                throwsIllegal(step, where);
+            } else {
+                step.run();
+            }
+            check(!(r[2].equals("-") && drew[0]), where + ": drew randomness");
+        }
+    }
+
+    static void uuidVectors() throws IOException {
+        List<String[]> rows = vectors("uuid.txt");
+        check(rows.size() > 10, "too few uuid vectors");
+        for (String[] r : rows) {
+            String where = String.join(" ", r);
+            String want = r[r.length - 1];
+            boolean v7 = r[0].equals("v7");
+            if (want.equals("error")) {
+                throwsIllegal(() -> Uuids.v7(Long.parseLong(r[1]), hex(r[2])), where);
+                continue;
+            }
+            UUID u = v7 ? Uuids.v7(Long.parseLong(r[1]), hex(r[2])) : Uuids.v4(hex(r[1]));
+            check(u.toString().equals(want), where + ": got " + u);
+            check(Uuids.parse(want).equals(u) && Uuids.parse(want.toUpperCase()).equals(u), "parse " + want);
+            check(u.version() == (v7 ? 7 : 4) && u.variant() == 2, "version/variant " + want);
+            if (v7) {
+                check(Uuids.timestamp(u) == Long.parseLong(r[1]), "timestamp " + want);
+            } else {
+                throwsIllegal(() -> Uuids.timestamp(u), "v4 timestamp " + want);
+            }
+        }
+    }
+
+    static void uuidInvalid() throws IOException {
+        List<String> rows = new ArrayList<>();
+        for (String line : Files.readAllLines(testdata.resolve("uuid_invalid.txt"))) {
+            if (!line.startsWith("#")) {
+                rows.add(line.substring(1, line.length() - 1));
+            }
+        }
+        check(rows.size() > 10, "too few uuid_invalid vectors");
+        for (String s : rows) {
+            throwsIllegal(() -> Uuids.parse(s), '"' + s + '"');
+        }
+        throwsIllegal(() -> Uuids.parse("1-1-1-1-1"), "UUID.fromString short form");
+        throwsIllegal(() -> Uuids.parse("017f22e2-79b0-7cc3-98c4-dc0c0c07398\uFF10"), "fullwidth digit");
+    }
+
+    static void uuidGenerate() {
+        Set<UUID> set = new HashSet<>();
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < 10_000; i++) {
+            UUID a = Uuids.v4();
+            UUID b = Uuids.v7();
+            check(a.version() == 4 && b.version() == 7 && a.variant() == 2 && b.variant() == 2, "version " + b);
+            set.add(a);
+            set.add(b);
+        }
+        check(set.size() == 20_000, "duplicates");
+        long ts = Uuids.timestamp(Uuids.v7());
+        check(ts >= now && ts < now + 5000, "v7 timestamp " + ts);
+    }
+
+    static void uuidMonotonic() throws InterruptedException {
+        MonotonicUuidV7 g = new MonotonicUuidV7();
+        String prev = g.next().toString();
+        for (int i = 0; i < 50_000; i++) {
+            String s = g.next().toString();
+            check(s.compareTo(prev) > 0, "not increasing: " + s + " after " + prev);
+            prev = s;
+        }
+        Set<UUID> all = ConcurrentHashMap.newKeySet();
+        Thread[] ts = new Thread[8];
+        for (int t = 0; t < ts.length; t++) {
+            ts[t] = new Thread(() -> {
+                for (int i = 0; i < 5000; i++) {
+                    all.add(g.next());
+                }
+            });
+            ts[t].start();
+        }
+        for (Thread t : ts) {
+            t.join();
+        }
+        check(all.size() == 40_000, "concurrent duplicates: " + all.size());
+    }
+
+    static void uuidMonotonicVectors() throws IOException {
+        List<String[]> rows = vectors("uuid7_monotonic.txt");
+        check(rows.size() > 10, "too few uuid7_monotonic vectors");
+        MonotonicUuidV7 g = new MonotonicUuidV7();
+        for (String[] r : rows) {
+            if (r[0].equals("reset")) {
+                g = new MonotonicUuidV7();
+                continue;
+            }
+            String where = String.join(" ", r);
+            boolean[] drew = {false};
+            MonotonicUuidV7 gen = g;
+            Runnable step = () -> {
+                UUID u = gen.next(Long.parseLong(r[1]), buf -> {
                     drew[0] = true;
                     if (!r[2].equals("-")) {
                         System.arraycopy(hex(r[2]), 0, buf, 0, buf.length);
