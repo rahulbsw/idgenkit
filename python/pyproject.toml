@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "idgenkit"
+version = "0.1.0"
+description = "Dependency-free ULID, Snowflake and Nano ID generators"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Rahul Jain" }]
+requires-python = ">=3.9"
+dependencies = []
+keywords = ["ulid", "snowflake", "nanoid", "id", "uuid", "unique-id"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/rahulbsw/idgenkit"
+Source = "https://github.com/rahulbsw/idgenkit/tree/main/python"
+Issues = "https://github.com/rahulbsw/idgenkit/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+idgenkit = ["py.typed"]

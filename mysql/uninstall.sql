@@ -1,0 +1,10 @@
+DROP FUNCTION IF EXISTS ulid_generate;
+DROP FUNCTION IF EXISTS ulid_generate_monotonic;
+DROP FUNCTION IF EXISTS ulid_timestamp;
+DROP FUNCTION IF EXISTS ulid_to_bin;
+DROP FUNCTION IF EXISTS bin_to_ulid;
+DROP FUNCTION IF EXISTS snowflake_generate;
+DROP FUNCTION IF EXISTS snowflake_timestamp;
+DROP FUNCTION IF EXISTS snowflake_machine_id;
+DROP FUNCTION IF EXISTS snowflake_sequence;
+DROP FUNCTION IF EXISTS nanoid_generate;

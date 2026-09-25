@@ -1,0 +1,24 @@
+[package]
+name = "idgenkit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Dependency-free ULID, Snowflake and Nano ID generators"
+license = "MIT"
+authors = ["Rahul Jain"]
+repository = "https://github.com/rahulbsw/idgenkit"
+homepage = "https://github.com/rahulbsw/idgenkit"
+documentation = "https://docs.rs/idgenkit"
+readme = "README.md"
+keywords = ["ulid", "snowflake", "nanoid", "id", "uuid"]
+categories = ["data-structures", "encoding"]
+include = ["src/**", "README.md", "LICENSE", "Cargo.toml"]
+
+[dependencies]
+
+[[bench]]
+name = "bench"
+harness = false
+
+[profile.bench]
+debug = false

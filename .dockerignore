@@ -1,0 +1,11 @@
+**/build
+**/target
+**/__pycache__
+.git
+.remember
+rust
+go
+java
+python
+mysql
+redis
