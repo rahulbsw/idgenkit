@@ -53,14 +53,15 @@ def postgres_rows() -> list[dict[str, str]]:
     return [dict(zip(header, (c.strip() for c in line.split("|")))) for line in lines[2:] if "|" in line]
 
 
-def compression_rows(section: str) -> list[tuple[str, float, float]]:
+def compression_rows(section: str) -> list[tuple[str, float, float, float]]:
+    """(format, raw, zlib, lzma) bytes per ID."""
     text = (RESULTS / "storage-compression.txt").read_text()
     block = text.split(f"## steady {section}")[1].split("##")[0]
     rows = []
     for line in block.strip().splitlines()[1:]:
         m = re.match(r"(.+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)$", line)
         if m:
-            rows.append((m.group(1).strip(), float(m.group(3)), float(m.group(4))))
+            rows.append((m.group(1).strip(), float(m.group(2)), float(m.group(3)), float(m.group(4))))
     return rows
 
 
@@ -98,8 +99,8 @@ def main() -> None:
         rows = compression_rows(section)
         (OUT / name).write_text(bar_chart(
             f"Compressed size per ID with zlib, steady {section} (lower is better)", "B",
-            [(label, z, f"lzma {x:g} B") for label, z, x in rows],
-            {label for label, z, _ in rows if z >= 15},
+            [(label, z, f"lzma {x:g} B") for label, _, z, x in rows],
+            {label for label, _, z, _ in rows if z >= 15},
         ))
     best = []
     for fmt, layouts in parquet_rows("1,000 IDs/s").items():

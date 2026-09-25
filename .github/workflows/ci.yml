@@ -25,6 +25,7 @@ jobs:
       - run: make test-libs
       - run: make -C c sanitize
       - run: cd rust && cargo clippy --all-targets -- -D warnings
+      - run: python3 bench/doc_tables.py --check
 
   redis:
     runs-on: ubuntu-latest

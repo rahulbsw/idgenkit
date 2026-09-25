@@ -1,7 +1,7 @@
 # Top-level driver. Each component can also be built on its own from its directory.
 PG_MAJOR ?= 17
 
-.PHONY: test test-libs test-dbs bench vectors \
+.PHONY: test test-libs test-dbs bench docs-tables vectors \
         test-python test-go test-rust test-java test-c test-redis test-mysql test-postgres clean
 
 test: test-libs test-dbs
@@ -27,6 +27,9 @@ test-postgres:
 
 bench:
 	./bench/run_all.sh
+
+docs-tables:
+	python3 bench/doc_tables.py
 
 vectors:
 	python3 testdata/generate_vectors.py

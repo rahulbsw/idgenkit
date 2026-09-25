@@ -36,3 +36,4 @@ section() { printf '\n## %s\n' "$1"; }
 
 echo
 echo "report written to $OUT"
+echo "update the tables in README.md and docs/ with: make docs-tables"
