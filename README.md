@@ -327,7 +327,7 @@ One-time setup (GitHub → Settings → Environments and Secrets):
 | Registry | Environment | Setup |
 |---|---|---|
 | PyPI | `pypi` | Add a trusted publisher on pypi.org: repo `rahulbsw/idgenkit`, workflow `release.yml`, environment `pypi`. No secret needed. |
-| crates.io | `crates-io` | First release: secret `CARGO_REGISTRY_TOKEN` (scope `publish-new`). Then enable trusted publishing for `release.yml` on crates.io and delete the secret. |
+| crates.io | `crates-io` (deploys from `v*` tags only) | First release: environment secret `CARGO_REGISTRY_TOKEN` (scope `publish-new`), set with `gh secret set CARGO_REGISTRY_TOKEN --env crates-io`, not as a repository secret. Then enable trusted publishing for `release.yml` on crates.io and delete the secret. |
 | Maven Central | `maven-central` | Secrets `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` (a Central Portal user token), `MAVEN_GPG_PRIVATE_KEY` (armored) and `MAVEN_GPG_PASSPHRASE`. The GPG public key must be on a keyserver. |
 | Go | none | Nothing to configure. |
 
