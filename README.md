@@ -14,7 +14,7 @@ only its standard library plus the operating system's CSPRNG. The database
 extensions share a single C99 core (`c/`). All implementations are checked
 against the same conformance vectors in `testdata/`.
 
-Documentation: <https://rahulbsw.github.io/idgenkit/>, with sources in [`docs/`](docs/):
+Documentation: <http://github.datasierra.com/idgenkit/>, with sources in [`docs/`](docs/):
 
 - [Compared with UUID](docs/comparison.md): when UUIDv4 or UUIDv7 is the better choice, and when these formats are.
 - [Data engineering and storage](docs/data-engineering.md): measured index size, insert speed, WAL and compression for every format.
