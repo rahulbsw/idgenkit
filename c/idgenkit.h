@@ -4,6 +4,13 @@
  * Shared by the PostgreSQL, MySQL and Redis extensions. Requires a POSIX
  * system (Linux, macOS, *BSD) and a GCC/Clang compatible compiler (for the
  * __atomic builtins used by the Snowflake generator).
+ *
+ * There is no shared library: each extension compiles idgenkit.c into its own
+ * module, so a change here needs every extension rebuilt. MySQL and Redis pass
+ * ../c/idgenkit.c to the compiler. PostgreSQL builds it through
+ * postgres/src/idgenkit_core.c, which #includes "../../c/idgenkit.c" because
+ * PGXS only compiles sources listed in OBJS; c/ must stay beside postgres/
+ * (postgres/Dockerfile copies both to /src).
  */
 #ifndef IDGENKIT_H
 #define IDGENKIT_H
