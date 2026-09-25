@@ -1,0 +1,24 @@
+title: idgenkit
+description: Dependency-free ULID, Snowflake and Nano ID generators for Java, Rust, Go, Python, PostgreSQL, MySQL and Redis
+baseurl: /idgenkit
+repository: rahulbsw/idgenkit
+optional_front_matter:
+  remove_originals: true
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter_opts:
+    disable: true
+defaults:
+  - scope: { path: "" }
+    values: { layout: default }
+nav:
+  - { title: Overview, url: / }
+  - { title: Getting started, url: /getting-started.html }
+  - { title: Compared with UUID, url: /comparison.html }
+  - { title: Data engineering & storage, url: /data-engineering.html }
+  - { title: Benchmarks, url: /benchmarks.html }
+  - { title: Specification, url: /ALGORITHMS.html }
+exclude:
+  - "*.sh"

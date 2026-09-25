@@ -1,0 +1,55 @@
+# Benchmarks
+
+How long it takes to generate one ID, in each library and database. For what IDs
+cost once stored (index size, insert speed, compression), see
+[Data engineering and storage](data-engineering.md). Those effects are usually
+much larger than generation time: at 70 ns per ID, a million IDs take 70 ms to
+generate.
+
+Measured on an Apple M-series Mac (arm64, 14 cores), single-threaded unless
+marked ×8. The databases ran in Docker (PostgreSQL) or natively (MySQL, Redis).
+Rerun everything with `make bench`; the full report is in
+[`bench/results/`](https://github.com/rahulbsw/idgenkit/tree/main/bench/results).
+
+## Libraries
+
+Nanoseconds per ID; lower is better.
+
+| | ULID | ULID monotonic | ULID parse | Snowflake | Nano ID (21) |
+|---|---|---|---|---|---|
+| C core | 48 | 15 | 12 | 243 | 194 |
+| Rust | 56 | 26 | 7 | 244 | 200 |
+| Go | 98 | 36 | 11 | 244 | 234 |
+| Java 24 | 213 | 21 | 27 | 244 | 186 |
+| Python 3.12 | 1,126 | 312 | 1,992 | 307 | 1,058 |
+
+- **Snowflake is capped at 4,096 IDs per millisecond per generator** by its
+  12-bit sequence, which works out to at least 244 ns per ID. Every native
+  implementation reaches that ceiling. To go faster, add generators with
+  different machine ids.
+- **Random IDs cost one call to the OS random source.** That call dominates
+  ULID and Nano ID timings. Monotonic ULID is faster because, within a
+  millisecond, it only increments the previous value.
+- **Parallel generation on macOS contends on the system random source.**
+  Generating ULIDs on all 14 cores in Go reaches 3.4 million per second in
+  total, fewer than the 10 million a single thread manages. Linux's `getrandom`
+  scales better here.
+
+## Databases
+
+| | ULID | ULID monotonic | ULID as `uuid` | Snowflake | Nano ID | Built-in reference |
+|---|---|---|---|---|---|---|
+| PostgreSQL 17 (ns per row) | 68 | 41 | 54 | 209 | 91 | `gen_random_uuid()` 489 |
+| MySQL 9.2 (ns per call) | 82 | 53 | — | 272 | 227 | `UUID()` 53 |
+| Redis 8.4 (requests/s) | 690k | 722k | — | 697k | 714k | `PING` 669k |
+
+- **PostgreSQL** figures are `SELECT count(expr) FROM generate_series(1, 1e6)`
+  minus the cost of `count(n)` alone. Snowflake's net figure can read below the
+  244 ns cap because some of that overhead overlaps with waiting for the next
+  millisecond; its wall time (278 ms per million) respects the cap. UUIDv7 wasn't
+  measured here because `uuidv7()` needs PostgreSQL 18; see the insert timings on
+  the [storage page](data-engineering.md).
+- **MySQL** figures use `BENCHMARK(1000000, expr)` on one connection. MySQL's
+  `UUID()` returns version 1 UUIDs (time based), which are cheap to generate.
+- **Redis** throughput is bound by networking and command dispatch (50 clients,
+  pipeline depth 16): every command runs at `PING` speed.

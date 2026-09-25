@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 316" font-family="-apple-system, Segoe UI, system-ui, sans-serif" font-size="13" role="img" aria-label="Primary-key index size per row, 5M rows (lower is better)">
+<text x="0" y="18" font-size="15" font-weight="600" fill="#6e7781">Primary-key index size per row, 5M rows (lower is better)</text>
+<text x="242" y="60" text-anchor="end" fill="#6e7781">bigint identity (baseline)</text>
+<rect x="250" y="47" width="111.9" height="18" rx="3" fill="#4493f8"/>
+<text x="367.9" y="60" fill="#6e7781">22.5 B · 90% full</text>
+<text x="242" y="86" text-anchor="end" fill="#6e7781">snowflake bigint</text>
+<rect x="250" y="73" width="111.9" height="18" rx="3" fill="#4493f8"/>
+<text x="367.9" y="86" fill="#6e7781">22.5 B · 90% full</text>
+<text x="242" y="112" text-anchor="end" fill="#6e7781">uuid v4 (gen_random_uuid)</text>
+<rect x="250" y="99" width="201.4" height="18" rx="3" fill="#d29922"/>
+<text x="457.4" y="112" fill="#6e7781">40.5 B · 70% full</text>
+<text x="242" y="138" text-anchor="end" fill="#6e7781">uuid v7 (uuidv7)</text>
+<rect x="250" y="125" width="156.7" height="18" rx="3" fill="#4493f8"/>
+<text x="412.7" y="138" fill="#6e7781">31.5 B · 90% full</text>
+<text x="242" y="164" text-anchor="end" fill="#6e7781">ulid as uuid</text>
+<rect x="250" y="151" width="210.9" height="18" rx="3" fill="#d29922"/>
+<text x="466.9" y="164" fill="#6e7781">42.4 B · 67% full</text>
+<text x="242" y="190" text-anchor="end" fill="#6e7781">ulid monotonic as uuid</text>
+<rect x="250" y="177" width="156.7" height="18" rx="3" fill="#4493f8"/>
+<text x="412.7" y="190" fill="#6e7781">31.5 B · 90% full</text>
+<text x="242" y="216" text-anchor="end" fill="#6e7781">ulid text COLLATE &quot;C&quot;</text>
+<rect x="250" y="203" width="330.3" height="18" rx="3" fill="#d29922"/>
+<text x="586.3" y="216" fill="#6e7781">66.4 B · 68% full</text>
+<text x="242" y="242" text-anchor="end" fill="#6e7781">ulid monotonic text COLLATE &quot;C&quot;</text>
+<rect x="250" y="229" width="247.2" height="18" rx="3" fill="#4493f8"/>
+<text x="503.2" y="242" fill="#6e7781">49.7 B · 90% full</text>
+<text x="242" y="268" text-anchor="end" fill="#6e7781">nanoid(21) text COLLATE &quot;C&quot;</text>
+<rect x="250" y="255" width="268.1" height="18" rx="3" fill="#d29922"/>
+<text x="524.1" y="268" fill="#6e7781">53.9 B · 68% full</text>
+<text x="242" y="294" text-anchor="end" fill="#6e7781">uuid v4 as text</text>
+<rect x="250" y="281" width="380.0" height="18" rx="3" fill="#d29922"/>
+<text x="636.0" y="294" fill="#6e7781">76.4 B · 70% full</text>
+</svg>

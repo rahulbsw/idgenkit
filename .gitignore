@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 *.log
 .remember/
+.playwright-mcp/
 postgres/test/results/
 postgres/test/regression.*
 postgres/**/*.o

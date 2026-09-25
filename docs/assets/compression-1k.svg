@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 290" font-family="-apple-system, Segoe UI, system-ui, sans-serif" font-size="13" role="img" aria-label="Compressed size per ID with zlib, steady 1,000 IDs/s (lower is better)">
+<text x="0" y="18" font-size="15" font-weight="600" fill="#6e7781">Compressed size per ID with zlib, steady 1,000 IDs/s (lower is better)</text>
+<text x="242" y="60" text-anchor="end" fill="#6e7781">bigint sequence (baseline)</text>
+<rect x="250" y="47" width="39.1" height="18" rx="3" fill="#4493f8"/>
+<text x="295.1" y="60" fill="#6e7781">2.1 B · lzma 0.3 B</text>
+<text x="242" y="86" text-anchor="end" fill="#6e7781">snowflake (8 B)</text>
+<rect x="250" y="73" width="39.1" height="18" rx="3" fill="#4493f8"/>
+<text x="295.1" y="86" fill="#6e7781">2.1 B · lzma 0.2 B</text>
+<text x="242" y="112" text-anchor="end" fill="#6e7781">uuid v4 (16 B)</text>
+<rect x="250" y="99" width="298.0" height="18" rx="3" fill="#d29922"/>
+<text x="554.0" y="112" fill="#6e7781">16 B · lzma 16 B</text>
+<text x="242" y="138" text-anchor="end" fill="#6e7781">uuid v7 (16 B)</text>
+<rect x="250" y="125" width="240.3" height="18" rx="3" fill="#4493f8"/>
+<text x="496.3" y="138" fill="#6e7781">12.9 B · lzma 10.5 B</text>
+<text x="242" y="164" text-anchor="end" fill="#6e7781">ulid (16 B)</text>
+<rect x="250" y="151" width="242.2" height="18" rx="3" fill="#4493f8"/>
+<text x="498.2" y="164" fill="#6e7781">13 B · lzma 10.9 B</text>
+<text x="242" y="190" text-anchor="end" fill="#6e7781">ulid monotonic (16 B)</text>
+<rect x="250" y="177" width="242.2" height="18" rx="3" fill="#4493f8"/>
+<text x="498.2" y="190" fill="#6e7781">13 B · lzma 10.9 B</text>
+<text x="242" y="216" text-anchor="end" fill="#6e7781">ulid text (26 chars)</text>
+<rect x="250" y="203" width="249.6" height="18" rx="3" fill="#4493f8"/>
+<text x="505.6" y="216" fill="#6e7781">13.4 B · lzma 11.3 B</text>
+<text x="242" y="242" text-anchor="end" fill="#6e7781">nanoid text (21 chars)</text>
+<rect x="250" y="229" width="296.2" height="18" rx="3" fill="#d29922"/>
+<text x="552.2" y="242" fill="#6e7781">15.9 B · lzma 16.1 B</text>
+<text x="242" y="268" text-anchor="end" fill="#6e7781">uuid v4 text (36 chars)</text>
+<rect x="250" y="255" width="380.0" height="18" rx="3" fill="#d29922"/>
+<text x="636.0" y="268" fill="#6e7781">20.4 B · lzma 17.8 B</text>
+</svg>
