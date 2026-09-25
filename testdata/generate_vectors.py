@@ -175,6 +175,167 @@ def ulid_monotonic_vectors() -> None:
     )
 
 
+UUID_MAX_TIME = (1 << 48) - 1
+UUID7_RANDOM_MAX = (1 << 74) - 1
+
+
+def uuid_with_version(raw: bytes, version: int) -> bytes:
+    b = bytearray(raw)
+    b[6] = (b[6] & 0x0F) | (version << 4)
+    b[8] = (b[8] & 0x3F) | 0x80
+    return bytes(b)
+
+
+def uuid_text(b: bytes) -> str:
+    h = b.hex()
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
+
+
+def uuid4_model(random16: bytes) -> str:
+    return uuid_text(uuid_with_version(random16, 4))
+
+
+def uuid7_bytes(ms: int, random10: bytes) -> bytes:
+    return uuid_with_version(ms.to_bytes(6, "big") + random10, 7)
+
+
+def uuid7_rand(b: bytes) -> int:
+    """The 74 random bits of a UUIDv7: rand_a << 62 | rand_b."""
+    v = int.from_bytes(b, "big")
+    return ((v >> 64) & 0xFFF) << 62 | (v & ((1 << 62) - 1))
+
+
+def uuid7_from_rand(ms: int, rand: int) -> bytes:
+    v = ms << 80 | 0x7 << 76 | (rand >> 62) << 64 | 0b10 << 62 | (rand & ((1 << 62) - 1))
+    return v.to_bytes(16, "big")
+
+
+def uuid_vectors() -> None:
+    rows = []
+    # RFC 9562 appendix A.3 and A.6.
+    rfc_v4 = bytes.fromhex("919108f752d143209bacf847db4148a8")
+    rfc_v7 = bytes.fromhex("017f22e279b07cc398c4dc0c0c07398f")
+    v4_cases = [rfc_v4, bytes(16), b"\xff" * 16] + [stream(f"uuid4-{i}", 16) for i in range(6)]
+    for raw in v4_cases:
+        rows.append(("v4", raw.hex(), uuid4_model(raw)))
+    v7_cases = [
+        (int.from_bytes(rfc_v7[:6], "big"), rfc_v7[6:]),
+        (0, bytes(10)),
+        (UUID_MAX_TIME, b"\xff" * 10),
+        (1469918176385, stream("uuid7-anchor", 10)),
+    ] + [(int.from_bytes(stream(f"uuid7-ms{i}", 6), "big"), stream(f"uuid7-{i}", 10)) for i in range(6)]
+    for ms, raw in v7_cases:
+        rows.append(("v7", ms, raw.hex(), uuid_text(uuid7_bytes(ms, raw))))
+    for ms in (UUID_MAX_TIME + 1, 1 << 62):
+        rows.append(("v7", ms, bytes(10).hex(), "error"))
+    write(
+        "uuid.txt",
+        "# UUIDv4 and UUIDv7 from fixed randomness (docs/ALGORITHMS.md).\n"
+        "#   v4 <random_hex(16 bytes)> <expected>\n"
+        "#   v7 <timestamp_ms> <random_hex(10 bytes)> <expected>\n"
+        "# expected: the canonical lowercase text form, or \"error\" (timestamp out of range).\n",
+        rows,
+    )
+
+
+def uuid_invalid_vectors() -> None:
+    valid = "017f22e2-79b0-7cc3-98c4-dc0c0c07398f"
+    cases = [
+        "",
+        valid[:-1],
+        valid + "0",
+        valid.replace("-", ""),
+        "{" + valid + "}",
+        "urn:uuid:" + valid,
+        valid[:8] + "_" + valid[9:],
+        valid[:13] + valid[14:] + "0",
+        "017f22e2-79b0-7cc3-98c4-dc0c0c07398g",
+        "017f22e2-79b0-7cc3-98c4-dc0c0c07398 ",
+        " 17f22e2-79b0-7cc3-98c4-dc0c0c07398f",
+        "017f22e2-79b0-7cc3-98c4+dc0c0c07398f",
+        "017f22e279b0-7cc3-98c4-dc0c-0c07398f",
+    ]
+    with open(os.path.join(HERE, "uuid_invalid.txt"), "w") as f:
+        f.write("# Strings every UUID parser must reject, one per line between the quotes.\n")
+        for case in cases:
+            f.write(f'"{case}"\n')
+
+
+class MonotonicUuid7Model:
+    def __init__(self) -> None:
+        self.last_ms = None
+        self.last_rand = 0
+
+    def draws_random(self, now: int) -> bool:
+        return self.last_ms is None or now > self.last_ms
+
+    def next(self, now: int, random10: bytes):
+        """Returns the next UUIDv7 bytes, or None for an error (state unchanged)."""
+        if not self.draws_random(now):
+            if self.last_rand == UUID7_RANDOM_MAX:
+                return None
+            self.last_rand += 1
+            return uuid7_from_rand(self.last_ms, self.last_rand)
+        if now > UUID_MAX_TIME:
+            return None
+        b = uuid7_bytes(now, random10)
+        self.last_ms, self.last_rand = now, uuid7_rand(b)
+        return b
+
+
+def uuid7_monotonic_vectors() -> None:
+    t = 0x017F22E279B0
+    rfc_random = bytes.fromhex("7cc398c4dc0c0c07398f")
+    # ("reset",) or (now_ms, random10 or None); None draws from the fixed stream.
+    cases = [
+        ("reset",),
+        (t, rfc_random),
+        (t, None),  # same millisecond: previous + 1
+        (t - 5, None),  # clock moved backwards: keep the last timestamp
+        (t + 1, None),  # new millisecond: fresh randomness
+        ("reset",),
+        (1000, bytes.fromhex("0000ffffffffffffffff")),  # rand_b at its maximum
+        (1000, None),  # carry from rand_b into rand_a, skipping the variant bits
+        (1000, None),
+        ("reset",),
+        (2000, bytes.fromhex("ffffffffffffffffffff")),  # every random bit set
+        (2000, None),  # overflow
+        (1999, None),  # still overflowing, clock behind
+        (2001, None),  # recovers in the next millisecond
+        ("reset",),
+        (UUID_MAX_TIME + 1, bytes(10)),  # beyond 48 bits
+        (UUID_MAX_TIME, None),  # the failed call left no state behind
+        (UUID_MAX_TIME, None),
+        (UUID_MAX_TIME + 1, None),  # beyond 48 bits after a valid ID
+        (UUID_MAX_TIME, None),  # continues from the last valid ID
+    ]
+    rows, model, draw = [], MonotonicUuid7Model(), 0
+    for case in cases:
+        if case[0] == "reset":
+            rows.append(("reset",))
+            model = MonotonicUuid7Model()
+            continue
+        now, random10 = case
+        if model.draws_random(now):
+            if random10 is None:
+                random10 = stream(f"uuid7-monotonic{draw}", 10)
+                draw += 1
+            random_hex = random10.hex()
+        else:
+            random10, random_hex = bytes(10), "-"
+        value = model.next(now, random10)
+        rows.append(("next", now, random_hex, "error" if value is None else uuid_text(value)))
+    write(
+        "uuid7_monotonic.txt",
+        "# Monotonic UUIDv7 generator behaviour. \"reset\" starts a new generator.\n"
+        "#   next <now_ms> <random_hex> <expected>\n"
+        "# random_hex: the 10 bytes the random source returns if the call draws randomness,\n"
+        "#             or \"-\" if the call must not draw any.\n"
+        "# expected:   the canonical UUID, or \"error\" (the call fails and the generator is unchanged).\n",
+        rows,
+    )
+
+
 SF_MAX_SEQUENCE = 4095
 SF_MAX_DELTA = (1 << 42) - 1
 
@@ -264,3 +425,6 @@ if __name__ == "__main__":
     nanoid_vectors()
     ulid_monotonic_vectors()
     snowflake_sequence_vectors()
+    uuid_vectors()
+    uuid_invalid_vectors()
+    uuid7_monotonic_vectors()

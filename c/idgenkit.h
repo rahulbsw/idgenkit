@@ -26,7 +26,7 @@ enum {
     UID_OK = 0,
     UID_ERR_RANDOM = -1,   /* OS random source failed */
     UID_ERR_RANGE = -2,    /* timestamp/argument outside the representable range */
-    UID_ERR_OVERFLOW = -3, /* monotonic ULID random component exhausted */
+    UID_ERR_OVERFLOW = -3, /* monotonic ULID/UUIDv7 random component exhausted */
     UID_ERR_INVALID = -4   /* malformed input */
 };
 
@@ -66,6 +66,39 @@ uint64_t uid_ulid_timestamp(const uid_ulid *u);
 void uid_ulid_encode(const uid_ulid *u, char out[UID_ULID_LEN]);
 /* Case-insensitive; rejects wrong length, invalid characters and >128-bit values. */
 int uid_ulid_decode(const char *text, size_t len, uid_ulid *out);
+
+/* ---- UUIDv4 / UUIDv7 (RFC 9562) ------------------------------------------ */
+
+#define UID_UUID_LEN 36
+#define UID_UUIDV7_MAX_TIME ((UINT64_C(1) << 48) - 1)
+
+typedef struct {
+    uint8_t b[16]; /* big-endian, as in the text form */
+} uid_uuid;
+
+/* Caller-owned monotonic state; zero-initialise before first use. Not
+ * thread-safe: use one per thread/process, or guard it externally. */
+typedef struct {
+    uid_uuid last;
+    int primed;
+} uid_uuidv7_monotonic;
+
+int uid_uuidv4(uid_uuid *out);
+/* Sets the version and variant bits of `random`; always succeeds. */
+void uid_uuidv4_from_random(uid_uuid *out, const uint8_t random[16]);
+int uid_uuidv7(uid_uuid *out);
+int uid_uuidv7_from_parts(uid_uuid *out, uint64_t timestamp_ms, const uint8_t random[10]);
+int uid_uuidv7_monotonic_next(uid_uuidv7_monotonic *state, uid_uuid *out);
+int uid_uuidv7_monotonic_next_at(uid_uuidv7_monotonic *state, uint64_t now_ms, uid_uuid *out);
+int uid_uuidv7_monotonic_next_custom_random(uid_uuidv7_monotonic *state, uint64_t now_ms,
+                                            uid_random_fn random, void *ctx, uid_uuid *out);
+unsigned uid_uuid_version(const uid_uuid *u);
+/* The 48-bit timestamp of a version 7 UUID; UID_ERR_INVALID for other versions. */
+int uid_uuidv7_timestamp(const uid_uuid *u, uint64_t *timestamp_ms);
+/* Writes exactly UID_UUID_LEN lowercase bytes; does not NUL-terminate. */
+void uid_uuid_encode(const uid_uuid *u, char out[UID_UUID_LEN]);
+/* Case-insensitive; accepts only the 36-character hyphenated form. */
+int uid_uuid_decode(const char *text, size_t len, uid_uuid *out);
 
 /* ---- Snowflake (42-bit ms | 10-bit machine | 12-bit sequence) ------------ */
 

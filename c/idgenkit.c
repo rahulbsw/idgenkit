@@ -28,7 +28,7 @@ const char *uid_strerror(int err) {
     case UID_ERR_RANGE:
         return "value out of range";
     case UID_ERR_OVERFLOW:
-        return "monotonic ULID random component overflow";
+        return "monotonic random component overflow";
     case UID_ERR_INVALID:
         return "invalid input";
     default:
@@ -195,6 +195,153 @@ int uid_ulid_decode(const char *text, size_t len, uid_ulid *out) {
         hi >>= 8;
         lo >>= 8;
     }
+    return UID_OK;
+}
+
+/* ---- UUIDv4 / UUIDv7 ------------------------------------------------------ */
+
+#define UUID_RAND_B_MAX ((UINT64_C(1) << 62) - 1)
+
+static void set_version(uid_uuid *u, unsigned version) {
+    u->b[6] = (uint8_t)((u->b[6] & 0x0F) | (version << 4));
+    u->b[8] = (uint8_t)((u->b[8] & 0x3F) | 0x80);
+}
+
+void uid_uuidv4_from_random(uid_uuid *out, const uint8_t random[16]) {
+    memcpy(out->b, random, 16);
+    set_version(out, 4);
+}
+
+int uid_uuidv4(uid_uuid *out) {
+    int rc = uid_random_bytes(out->b, 16);
+    if (rc == UID_OK)
+        set_version(out, 4);
+    return rc;
+}
+
+int uid_uuidv7_from_parts(uid_uuid *out, uint64_t timestamp_ms, const uint8_t random[10]) {
+    if (timestamp_ms > UID_UUIDV7_MAX_TIME)
+        return UID_ERR_RANGE;
+    for (int i = 5; i >= 0; i--, timestamp_ms >>= 8)
+        out->b[i] = (uint8_t)timestamp_ms;
+    memcpy(out->b + 6, random, 10);
+    set_version(out, 7);
+    return UID_OK;
+}
+
+int uid_uuidv7(uid_uuid *out) {
+    uint8_t random[10];
+    int rc = uid_random_bytes(random, sizeof random);
+    return rc == UID_OK ? uid_uuidv7_from_parts(out, uid_now_ms(), random) : rc;
+}
+
+unsigned uid_uuid_version(const uid_uuid *u) {
+    return u->b[6] >> 4;
+}
+
+int uid_uuidv7_timestamp(const uid_uuid *u, uint64_t *timestamp_ms) {
+    uint64_t ms = 0;
+    if (uid_uuid_version(u) != 7)
+        return UID_ERR_INVALID;
+    for (int i = 0; i < 6; i++)
+        ms = ms << 8 | u->b[i];
+    *timestamp_ms = ms;
+    return UID_OK;
+}
+
+/* Adds one to the 74 random bits (rand_a << 62 | rand_b), skipping the
+ * version and variant bits. Returns 0 if they are already all ones. */
+static int uuidv7_increment(uid_uuid *u) {
+    uint64_t rand_a = (uint64_t)(u->b[6] & 0x0F) << 8 | u->b[7];
+    uint64_t rand_b = (uint64_t)(u->b[8] & 0x3F);
+    for (int i = 9; i < 16; i++)
+        rand_b = rand_b << 8 | u->b[i];
+    if (rand_b < UUID_RAND_B_MAX) {
+        rand_b++;
+    } else if (rand_a < 0xFFF) {
+        rand_a++;
+        rand_b = 0;
+    } else {
+        return 0;
+    }
+    u->b[6] = (uint8_t)(0x70 | rand_a >> 8);
+    u->b[7] = (uint8_t)rand_a;
+    for (int i = 15; i >= 9; i--, rand_b >>= 8)
+        u->b[i] = (uint8_t)rand_b;
+    u->b[8] = (uint8_t)(0x80 | rand_b);
+    return 1;
+}
+
+int uid_uuidv7_monotonic_next_custom_random(uid_uuidv7_monotonic *st, uint64_t now_ms,
+                                            uid_random_fn random, void *ctx, uid_uuid *out) {
+    uint64_t last_ms;
+    uint8_t buf[10];
+    uid_uuid next;
+    int rc;
+
+    if (st->primed && uid_uuidv7_timestamp(&st->last, &last_ms) == UID_OK && now_ms <= last_ms) {
+        next = st->last;
+        if (!uuidv7_increment(&next))
+            return UID_ERR_OVERFLOW;
+        st->last = next;
+        *out = next;
+        return UID_OK;
+    }
+    if (now_ms > UID_UUIDV7_MAX_TIME)
+        return UID_ERR_RANGE;
+    rc = random(ctx, buf, sizeof buf);
+    if (rc != UID_OK)
+        return rc;
+    uid_uuidv7_from_parts(&next, now_ms, buf);
+    st->last = next;
+    st->primed = 1;
+    *out = next;
+    return UID_OK;
+}
+
+int uid_uuidv7_monotonic_next_at(uid_uuidv7_monotonic *st, uint64_t now_ms, uid_uuid *out) {
+    return uid_uuidv7_monotonic_next_custom_random(st, now_ms, os_random, NULL, out);
+}
+
+int uid_uuidv7_monotonic_next(uid_uuidv7_monotonic *st, uid_uuid *out) {
+    return uid_uuidv7_monotonic_next_at(st, uid_now_ms(), out);
+}
+
+static const char HEX[16] = "0123456789abcdef";
+
+void uid_uuid_encode(const uid_uuid *u, char out[UID_UUID_LEN]) {
+    for (int i = 0, o = 0; i < 16; i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10)
+            out[o++] = '-';
+        out[o++] = HEX[u->b[i] >> 4];
+        out[o++] = HEX[u->b[i] & 15];
+    }
+}
+
+static int hex_value(unsigned char c) {
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    c |= 0x20;
+    return c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+}
+
+int uid_uuid_decode(const char *text, size_t len, uid_uuid *out) {
+    uid_uuid u;
+    if (len != UID_UUID_LEN)
+        return UID_ERR_INVALID;
+    for (int i = 0, t = 0; i < 16; i++) {
+        if (t == 8 || t == 13 || t == 18 || t == 23) {
+            if (text[t] != '-')
+                return UID_ERR_INVALID;
+            t++;
+        }
+        int hi = hex_value((unsigned char)text[t]), lo = hex_value((unsigned char)text[t + 1]);
+        if (hi < 0 || lo < 0)
+            return UID_ERR_INVALID;
+        u.b[i] = (uint8_t)(hi << 4 | lo);
+        t += 2;
+    }
+    *out = u;
     return UID_OK;
 }
 

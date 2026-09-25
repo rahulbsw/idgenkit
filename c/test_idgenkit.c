@@ -153,6 +153,123 @@ static void test_ulid_monotonic_vectors(void) {
     CHECK(rows > 10, "too few ulid_monotonic vectors");
 }
 
+static void test_uuid_vectors(void) {
+    FILE *f = open_vectors("uuid.txt");
+    char line[256], hex[64], want[64];
+    unsigned long long ms;
+    int rows = 0;
+    while (fgets(line, sizeof line, f)) {
+        uid_uuid u, p;
+        char enc[UID_UUID_LEN + 1] = {0};
+        uint8_t rnd[16];
+        int rc;
+        if (line[0] == '#')
+            continue;
+        if (sscanf(line, "v4 %63s %63s", hex, want) == 2) {
+            hex_decode(hex, rnd, 16);
+            uid_uuidv4_from_random(&u, rnd);
+            rc = UID_OK;
+        } else if (sscanf(line, "v7 %llu %63s %63s", &ms, hex, want) == 3) {
+            hex_decode(hex, rnd, 10);
+            rc = uid_uuidv7_from_parts(&u, ms, rnd);
+        } else {
+            CHECK(0, "bad uuid line: %s", line);
+            continue;
+        }
+        rows++;
+        if (strcmp(want, "error") == 0) {
+            CHECK(rc == UID_ERR_RANGE, "expected a range error: %s", line);
+            continue;
+        }
+        uid_uuid_encode(&u, enc);
+        CHECK(rc == UID_OK && strcmp(enc, want) == 0, "got %s want %s", enc, want);
+        CHECK(uid_uuid_decode(want, strlen(want), &p) == UID_OK && memcmp(&p, &u, 16) == 0,
+              "decode %s", want);
+        CHECK(uid_uuid_version(&p) == (unsigned)(line[1] - '0'), "version %s", want);
+        uint64_t ts = 0;
+        rc = uid_uuidv7_timestamp(&p, &ts);
+        CHECK(line[1] == '7' ? rc == UID_OK && ts == ms : rc == UID_ERR_INVALID, "timestamp %s", want);
+        for (char *c = want; *c; c++)
+            if (*c >= 'a' && *c <= 'f')
+                *c = (char)(*c - 'a' + 'A');
+        CHECK(uid_uuid_decode(want, strlen(want), &p) == UID_OK && memcmp(&p, &u, 16) == 0,
+              "uppercase decode %s", want);
+    }
+    fclose(f);
+    CHECK(rows > 10, "too few uuid vectors");
+}
+
+static void test_uuid_invalid(void) {
+    FILE *f = open_vectors("uuid_invalid.txt");
+    char line[256];
+    int rows = 0;
+    uid_uuid u;
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#')
+            continue;
+        line[strcspn(line, "\r\n")] = 0;
+        size_t len = strlen(line);
+        CHECK(len >= 2 && line[0] == '"' && line[len - 1] == '"', "unquoted line: %s", line);
+        CHECK(uid_uuid_decode(line + 1, len - 2, &u) != UID_OK, "accepted %s", line);
+        rows++;
+    }
+    fclose(f);
+    CHECK(rows > 10, "too few uuid_invalid vectors");
+}
+
+static void test_uuid_generate(void) {
+    uid_uuid a, b;
+    uint64_t ts, now = uid_now_ms();
+    CHECK(uid_uuidv4(&a) == UID_OK && uid_uuidv4(&b) == UID_OK && memcmp(&a, &b, 16) != 0, "v4 unique");
+    CHECK(uid_uuid_version(&a) == 4 && (a.b[8] & 0xC0) == 0x80, "v4 version/variant");
+    CHECK(uid_uuidv7(&a) == UID_OK && uid_uuid_version(&a) == 7 && (a.b[8] & 0xC0) == 0x80,
+          "v7 version/variant");
+    CHECK(uid_uuidv7_timestamp(&a, &ts) == UID_OK && ts >= now && ts < now + 5000, "v7 timestamp");
+    uid_uuidv7_monotonic m = {0};
+    CHECK(uid_uuidv7_monotonic_next(&m, &a) == UID_OK, "monotonic first");
+    for (int i = 0; i < 100000; i++) {
+        CHECK(uid_uuidv7_monotonic_next(&m, &b) == UID_OK && memcmp(&a, &b, 16) < 0, "monotonic order");
+        a = b;
+    }
+}
+
+static void test_uuidv7_monotonic_vectors(void) {
+    FILE *f = open_vectors("uuid7_monotonic.txt");
+    char line[256], hex[32], want[64];
+    unsigned long long now;
+    uid_uuidv7_monotonic st = {0};
+    int rows = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#')
+            continue;
+        if (strncmp(line, "reset", 5) == 0) {
+            memset(&st, 0, sizeof st);
+            continue;
+        }
+        if (sscanf(line, "next %llu %31s %63s", &now, hex, want) != 3) {
+            CHECK(0, "bad uuid7_monotonic line: %s", line);
+            continue;
+        }
+        struct fixed_random r = {{0}, strcmp(hex, "-") != 0, 0};
+        if (r.present)
+            hex_decode(hex, r.bytes, sizeof r.bytes);
+        uid_uuid u;
+        int rc = uid_uuidv7_monotonic_next_custom_random(&st, now, fixed_random, &r, &u);
+        CHECK(r.present || r.calls == 0, "drew randomness at %llu", now);
+        if (strcmp(want, "error") == 0) {
+            CHECK(rc != UID_OK, "expected an error at %llu", now);
+        } else {
+            char enc[UID_UUID_LEN + 1] = {0};
+            uid_uuid_encode(&u, enc);
+            CHECK(rc == UID_OK && strcmp(enc, want) == 0, "at %llu got %s (rc %d) want %s", now, enc,
+                  rc, want);
+        }
+        rows++;
+    }
+    fclose(f);
+    CHECK(rows > 10, "too few uuid7_monotonic vectors");
+}
+
 struct script_clock {
     uint64_t readings[16];
     int n, pos;
@@ -340,6 +457,10 @@ int main(int argc, char **argv) {
     test_ulid_invalid();
     test_ulid_monotonic();
     test_ulid_monotonic_vectors();
+    test_uuid_vectors();
+    test_uuid_invalid();
+    test_uuid_generate();
+    test_uuidv7_monotonic_vectors();
     test_snowflake_vectors();
     test_snowflake_sequence_vectors();
     test_snowflake_concurrent();
