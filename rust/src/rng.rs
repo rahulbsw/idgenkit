@@ -15,7 +15,11 @@ mod sys {
     }
 
     pub fn fill(buf: &mut [u8]) -> std::io::Result<()> {
-        unsafe { arc4random_buf(buf.as_mut_ptr(), buf.len()) };
+        // Apple's arc4random_buf is ~6x slower per call above 10 bytes.
+        let chunk = if cfg!(any(target_os = "macos", target_os = "ios")) { 10 } else { usize::MAX };
+        for part in buf.chunks_mut(chunk) {
+            unsafe { arc4random_buf(part.as_mut_ptr(), part.len()) };
+        }
         Ok(())
     }
 }

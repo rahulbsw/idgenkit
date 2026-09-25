@@ -37,7 +37,16 @@ const char *uid_strerror(int err) {
 }
 
 int uid_random_bytes(uint8_t *buf, size_t len) {
-#ifdef UID_HAVE_ARC4RANDOM
+#if defined(__APPLE__)
+    /* macOS arc4random_buf is ~6x slower per call above 10 bytes. */
+    while (len > 10) {
+        arc4random_buf(buf, 10);
+        buf += 10;
+        len -= 10;
+    }
+    arc4random_buf(buf, len);
+    return UID_OK;
+#elif defined(UID_HAVE_ARC4RANDOM)
     arc4random_buf(buf, len);
     return UID_OK;
 #else

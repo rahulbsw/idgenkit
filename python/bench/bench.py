@@ -8,7 +8,16 @@ import timeit
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
-from idgenkit import ULID, MonotonicULID, Snowflake, custom_alphabet, nanoid  # noqa: E402
+from idgenkit import (  # noqa: E402
+    ULID,
+    MonotonicULID,
+    MonotonicUUID7,
+    Snowflake,
+    custom_alphabet,
+    nanoid,
+    uuid4,
+    uuid7,
+)
 from idgenkit import ulid  # noqa: E402
 
 N = int(os.environ.get("BENCH_N", "200000"))
@@ -24,6 +33,7 @@ def bench(name, fn):
 def main():
     print(f"# Python {platform.python_version()} ({platform.machine()}), N={N}")
     mono = MonotonicULID()
+    uuid_mono = MonotonicUUID7()
     sf = Snowflake(machine_id=1)
     hex_gen = custom_alphabet("0123456789abcdef", 21)
     sample = ulid.generate()
@@ -32,6 +42,9 @@ def main():
     bench("ulid.ULID.generate", ULID.generate)
     bench("ulid.monotonic", mono.next)
     bench("ulid.parse", lambda: ULID.parse(sample))
+    bench("uuid.v4", uuid4)
+    bench("uuid.v7", uuid7)
+    bench("uuid.v7.monotonic", uuid_mono.next)
     bench("snowflake.next_id", sf.next_id)
     bench("nanoid(21)", nanoid)
     bench("nanoid.custom(hex,21)", hex_gen)

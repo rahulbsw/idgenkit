@@ -22,27 +22,45 @@ BLOCK = re.compile(r"<!-- bench-table (\S+) -->\n.*?<!-- /bench-table -->", re.S
 MEASUREMENT = re.compile(r"^(\w+)\s+(.+?)\s+([\d.]+) (?:ns/op|req/s)")
 VERSION = re.compile(r"^# (Java|Python|PostgreSQL|MySQL|Redis) ([\d.]+)")
 
-LIBRARY_COLUMNS = ["ULID", "ULID monotonic", "ULID parse", "Snowflake", "Nano ID (21)"]
+LIBRARY_COLUMNS = [
+    "ULID", "ULID monotonic", "ULID parse", "UUIDv4", "UUIDv7", "UUIDv7 monotonic", "Snowflake", "Nano ID (21)",
+]
+UUID_BENCHMARKS = ["uuid.v4", "uuid.v7", "uuid.v7.monotonic"]
 LIBRARY_BENCHMARKS = {
-    "c": ("C core", ["ulid.new", "ulid.monotonic", "ulid.decode", "snowflake.next", "nanoid(21)"]),
-    "rust": ("Rust", ["ulid.new", "ulid.monotonic", "ulid.parse", "snowflake.next_id", "nanoid(21)"]),
-    "go": ("Go", ["ulid.New", "ulid.Monotonic", "ulid.Parse", "snowflake.Next", "nanoid.New"]),
-    "java": ("Java", ["ulid.generate", "ulid.monotonic", "ulid.parse", "snowflake.nextId", "nanoid(21)"]),
-    "python": ("Python", ["ulid.ULID.generate", "ulid.monotonic", "ulid.parse", "snowflake.next_id", "nanoid(21)"]),
+    "c": ("C core", ["ulid.new", "ulid.monotonic", "ulid.decode", *UUID_BENCHMARKS, "snowflake.next", "nanoid(21)"]),
+    "rust": ("Rust", [
+        "ulid.new", "ulid.monotonic", "ulid.parse", *UUID_BENCHMARKS, "snowflake.next_id", "nanoid(21)",
+    ]),
+    "go": ("Go", [
+        "ulid.New", "ulid.Monotonic", "ulid.Parse", "uuid.NewV4", "uuid.NewV7", "uuid.Monotonic",
+        "snowflake.Next", "nanoid.New",
+    ]),
+    "java": ("Java", [
+        "ulid.generate", "ulid.monotonic", "ulid.parse", *UUID_BENCHMARKS, "snowflake.nextId", "nanoid(21)",
+    ]),
+    "python": ("Python", [
+        "ulid.ULID.generate", "ulid.monotonic", "ulid.parse", *UUID_BENCHMARKS, "snowflake.next_id", "nanoid(21)",
+    ]),
 }
 
-DATABASE_COLUMNS = ["ULID", "ULID monotonic", "ULID as `uuid`", "Snowflake", "Nano ID", "Built-in reference"]
+DATABASE_COLUMNS = [
+    "ULID", "ULID monotonic", "ULID as `uuid`", "UUIDv7", "UUIDv7 monotonic", "Snowflake", "Nano ID",
+    "Built-in reference",
+]
 DATABASE_BENCHMARKS = {
     "postgres": ("PostgreSQL", "ns per row", [
         "ulid_generate()", "ulid_generate_monotonic()", "ulid_generate_uuid()",
+        "uuidv7_generate()", "uuidv7_generate_monotonic()",
         "snowflake_generate()", "nanoid_generate()", "gen_random_uuid()",
     ]),
     "mysql": ("MySQL", "ns per call", [
         "ulid_generate()", "ulid_generate_monotonic()", None,
+        "uuidv7_generate()", "uuidv7_generate_monotonic()",
         "snowflake_generate()", "nanoid_generate()", "UUID()",
     ]),
     "redis": ("Redis", "requests/s", [
-        "ULID.GENERATE", "ULID.MONOTONIC", None, "SNOWFLAKE.GENERATE", "NANOID.GENERATE", "PING",
+        "ULID.GENERATE", "ULID.MONOTONIC", None, "UUIDV7.GENERATE", "UUIDV7.MONOTONIC",
+        "SNOWFLAKE.GENERATE", "NANOID.GENERATE", "PING",
     ]),
 }
 

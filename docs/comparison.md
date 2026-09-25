@@ -12,6 +12,8 @@ give you something UUID doesn't. Storage figures come from the
   the simplest choice.** It's an IETF standard (RFC 9562, 2024), fits every
   native `uuid` type, and gives the same index benefits as ULID. PostgreSQL 18
   has it built in as `uuidv7()`, as does Python 3.14 as `uuid.uuid7()`.
+  idgenkit provides it everywhere else: PostgreSQL 14–17, MySQL, Redis, Go,
+  Rust, Java and older Python, plus a monotonic mode like ULID's.
 - **If you need identifiers that reveal nothing, UUIDv4 or Nano ID are the
   right choice.** Any time-ordered format leaks when the record was created.
 - **ULID** earns its place when the ID is handled as text: 26 case-insensitive

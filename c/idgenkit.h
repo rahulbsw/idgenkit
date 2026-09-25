@@ -1,5 +1,5 @@
 /*
- * idgenkit: dependency-free ULID, Snowflake and Nano ID core in C99.
+ * idgenkit: dependency-free ULID, UUIDv4/v7, Snowflake and Nano ID core in C99.
  *
  * Shared by the PostgreSQL, MySQL and Redis extensions. Requires a POSIX
  * system (Linux, macOS, *BSD) and a GCC/Clang compatible compiler (for the

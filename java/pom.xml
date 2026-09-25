@@ -9,7 +9,7 @@
   <version>0.1.0</version>
   <packaging>jar</packaging>
   <name>idgenkit</name>
-  <description>Dependency-free ULID, Snowflake and Nano ID generators</description>
+  <description>Dependency-free ULID, UUIDv4/v7, Snowflake and Nano ID generators</description>
   <url>https://github.com/rahulbsw/idgenkit</url>
 
   <licenses>

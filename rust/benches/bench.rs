@@ -8,6 +8,7 @@ use std::time::Instant;
 use idgenkit::nanoid::{self, CustomAlphabet};
 use idgenkit::snowflake::Snowflake;
 use idgenkit::ulid::{MonotonicGenerator, Ulid};
+use idgenkit::uuid::{MonotonicV7Generator, Uuid};
 
 fn bench<T, F: FnMut() -> T>(name: &str, iters: u64, mut f: F) {
     for _ in 0..iters / 10 {
@@ -51,6 +52,7 @@ fn main() {
     println!("# Rust, N={n}");
 
     let mono = MonotonicGenerator::new();
+    let uuid_mono = MonotonicV7Generator::new();
     let sf = Arc::new(Snowflake::new(1, 0).unwrap());
     let hex = CustomAlphabet::new("0123456789abcdef", 21).unwrap();
     let sample = Ulid::new().to_string();
@@ -59,6 +61,9 @@ fn main() {
     bench("ulid.new.to_string", n, || Ulid::new().to_string());
     bench("ulid.monotonic", n, || mono.next().unwrap());
     bench("ulid.parse", n, || Ulid::parse(black_box(&sample)).unwrap());
+    bench("uuid.v4", n, Uuid::new_v4);
+    bench("uuid.v7", n, || Uuid::new_v7().unwrap());
+    bench("uuid.v7.monotonic", n, || uuid_mono.next().unwrap());
     bench("snowflake.next_id", n, || sf.next_id().unwrap());
     bench("nanoid(21)", n, nanoid::nanoid);
     bench("nanoid.custom(hex,21)", n, || hex.generate());

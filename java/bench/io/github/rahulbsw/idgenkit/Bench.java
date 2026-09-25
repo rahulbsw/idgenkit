@@ -15,6 +15,7 @@ public final class Bench {
         System.out.println("# Java " + System.getProperty("java.version") + ", N=" + n);
 
         MonotonicUlid mono = new MonotonicUlid();
+        MonotonicUuidV7 uuidMono = new MonotonicUuidV7();
         Snowflake sf = new Snowflake(1);
         NanoId hex = NanoId.customAlphabet("0123456789abcdef", 21);
         String sample = Ulid.generate().toString();
@@ -23,6 +24,9 @@ public final class Bench {
         bench("ulid.generate.toString", n, () -> Ulid.generate().toString());
         bench("ulid.monotonic", n, mono::next);
         bench("ulid.parse", n, () -> Ulid.parse(sample));
+        bench("uuid.v4", n, Uuids::v4);
+        bench("uuid.v7", n, Uuids::v7);
+        bench("uuid.v7.monotonic", n, uuidMono::next);
         bench("snowflake.nextId", n, sf::nextId);
         bench("nanoid(21)", n, () -> NanoId.generate());
         bench("nanoid.custom(hex,21)", n, hex::next);
