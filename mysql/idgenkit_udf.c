@@ -1,12 +1,12 @@
 /*
- * MySQL / MariaDB loadable functions (UDFs) for ULID, Snowflake and Nano ID.
- * See install.sql for the CREATE FUNCTION statements.
+ * MySQL / MariaDB loadable functions (UDFs) for ULID, UUIDv4/v7, Snowflake and
+ * Nano ID. See install.sql for the CREATE FUNCTION statements.
  *
  * Concurrency: MySQL runs UDFs concurrently from many connection threads.
  *  - Snowflake state is one process-wide word updated with atomic CAS, so IDs
  *    are unique across all connections of the server.
- *  - Monotonic ULID state is thread-local: monotonic per connection thread,
- *    globally unique through its 80 random bits.
+ *  - Monotonic ULID and UUIDv7 state is thread-local: monotonic per connection
+ *    thread, globally unique through their 80 / 74 random bits.
  */
 #include <stdbool.h>
 #include <stdio.h>
@@ -21,6 +21,7 @@
 
 static uint64_t snowflake_state = 0;
 static __thread uid_ulid_monotonic ulid_mono;
+static __thread uid_uuidv7_monotonic uuidv7_mono;
 
 /* Mark the function non-deterministic so it is evaluated once per row. */
 static void init_volatile(UDF_INIT *initid, bool maybe_null, unsigned long max_length) {
@@ -151,6 +152,78 @@ char *bin_to_ulid(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long 
     uid_ulid_encode(&u, result);
     *length = UID_ULID_LEN;
     return result;
+}
+
+/* ---- UUIDv4 / UUIDv7 ---------------------------------------------------------- */
+
+static char *uuid_result(int rc, const uid_uuid *u, char *result, unsigned long *length,
+                         unsigned char *error) {
+    if (rc != UID_OK) {
+        *error = 1;
+        return NULL;
+    }
+    uid_uuid_encode(u, result);
+    *length = UID_UUID_LEN;
+    return result;
+}
+
+bool uuidv4_generate_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+    init_volatile(initid, false, UID_UUID_LEN);
+    return require_args(args, message, 0, 0, "uuidv4_generate() takes no arguments");
+}
+
+char *uuidv4_generate(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length,
+                      unsigned char *is_null, unsigned char *error) {
+    (void)initid, (void)args, (void)is_null;
+    uid_uuid u;
+    return uuid_result(uid_uuidv4(&u), &u, result, length, error);
+}
+
+bool uuidv7_generate_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+    init_volatile(initid, false, UID_UUID_LEN);
+    return require_args(args, message, 0, 0, "uuidv7_generate() takes no arguments");
+}
+
+char *uuidv7_generate(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length,
+                      unsigned char *is_null, unsigned char *error) {
+    (void)initid, (void)args, (void)is_null;
+    uid_uuid u;
+    return uuid_result(uid_uuidv7(&u), &u, result, length, error);
+}
+
+bool uuidv7_generate_monotonic_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+    init_volatile(initid, false, UID_UUID_LEN);
+    return require_args(args, message, 0, 0, "uuidv7_generate_monotonic() takes no arguments");
+}
+
+char *uuidv7_generate_monotonic(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length,
+                                unsigned char *is_null, unsigned char *error) {
+    (void)initid, (void)args, (void)is_null;
+    uid_uuid u;
+    return uuid_result(uid_uuidv7_monotonic_next(&uuidv7_mono, &u), &u, result, length, error);
+}
+
+bool uuidv7_timestamp_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+    return one_string_arg(initid, args, message, 21, "usage: uuidv7_timestamp(uuid text or UUID_TO_BIN value)");
+}
+
+long long uuidv7_timestamp(UDF_INIT *initid, UDF_ARGS *args, unsigned char *is_null, unsigned char *error) {
+    (void)initid;
+    uid_uuid u;
+    uint64_t ms;
+    if (args->args[0] == NULL) {
+        *is_null = 1;
+        return 0;
+    }
+    if (args->lengths[0] == 16)
+        memcpy(u.b, args->args[0], 16);
+    else if (uid_uuid_decode(args->args[0], args->lengths[0], &u) != UID_OK)
+        *error = 1;
+    if (*error || uid_uuidv7_timestamp(&u, &ms) != UID_OK) {
+        *error = 1;
+        return 0;
+    }
+    return (long long)ms;
 }
 
 /* ---- Snowflake -------------------------------------------------------------- */

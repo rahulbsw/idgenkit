@@ -63,6 +63,7 @@ if [[ "${1:-}" == "--bench" ]]; then
   echo "# PostgreSQL $PG_MAJOR, SELECT count(expr) FROM generate_series(1, $N), single session"
   base_ms=""
   for expr in "n" "gen_random_uuid()" "ulid_generate()" "ulid_generate_monotonic()" "ulid_generate_uuid()" \
+              "uuidv7_generate()" "uuidv7_generate_monotonic()" \
               "snowflake_generate()" "nanoid_generate()" "nanoid_generate(21, '0123456789abcdef')"; do
     best=""
     for _ in 1 2 3; do

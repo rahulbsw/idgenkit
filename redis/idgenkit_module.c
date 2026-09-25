@@ -1,5 +1,5 @@
 /*
- * Redis module exposing ULID, Snowflake and Nano ID generation.
+ * Redis module exposing ULID, UUIDv4/v7, Snowflake and Nano ID generation.
  *
  *   loadmodule /path/idgenkit.so [MACHINE_ID <0-1023>] [EPOCH_MS <ms>]
  *
@@ -7,6 +7,10 @@
  *   ULID.GENERATE                     -> 26-char ULID
  *   ULID.MONOTONIC                    -> strictly increasing ULID
  *   ULID.TIME <ulid>                  -> embedded Unix time in ms
+ *   UUIDV4.GENERATE                   -> 36-char random UUID
+ *   UUIDV7.GENERATE                   -> 36-char time-ordered UUID
+ *   UUIDV7.MONOTONIC                  -> strictly increasing UUIDv7
+ *   UUIDV7.TIME <uuid>                -> embedded Unix time in ms
  *   SNOWFLAKE.GENERATE                -> 64-bit integer id
  *   SNOWFLAKE.PARSE <id>              -> [timestamp_ms, machine_id, sequence]
  *   NANOID.GENERATE [size [alphabet]] -> Nano ID (default size 21, URL alphabet)
@@ -26,13 +30,14 @@ static uint32_t machine_id = 1;
 static uint64_t epoch_ms = 0;
 static uint64_t snowflake_state = 0;
 static uid_ulid_monotonic ulid_mono;
+static uid_uuidv7_monotonic uuidv7_mono;
 
 static int reply_error(RedisModuleCtx *ctx, int rc) {
     switch (rc) {
     case UID_ERR_RANGE:
         return RedisModule_ReplyWithError(ctx, "ERR value out of range (check clock and EPOCH_MS)");
     case UID_ERR_OVERFLOW:
-        return RedisModule_ReplyWithError(ctx, "ERR monotonic ULID overflow within one millisecond");
+        return RedisModule_ReplyWithError(ctx, "ERR monotonic overflow within one millisecond");
     case UID_ERR_INVALID:
         return RedisModule_ReplyWithError(ctx, "ERR invalid argument");
     default:
@@ -73,6 +78,52 @@ static int UlidTime(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     if (uid_ulid_decode(s, len, &u) != UID_OK)
         return RedisModule_ReplyWithError(ctx, "ERR invalid ULID");
     return RedisModule_ReplyWithLongLong(ctx, (long long)uid_ulid_timestamp(&u));
+}
+
+static int reply_uuid(RedisModuleCtx *ctx, int rc, const uid_uuid *u) {
+    char text[UID_UUID_LEN];
+    if (rc != UID_OK)
+        return reply_error(ctx, rc);
+    uid_uuid_encode(u, text);
+    return RedisModule_ReplyWithStringBuffer(ctx, text, sizeof text);
+}
+
+static int Uuidv4Generate(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    (void)argv;
+    if (argc != 1)
+        return RedisModule_WrongArity(ctx);
+    uid_uuid u;
+    return reply_uuid(ctx, uid_uuidv4(&u), &u);
+}
+
+static int Uuidv7Generate(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    (void)argv;
+    if (argc != 1)
+        return RedisModule_WrongArity(ctx);
+    uid_uuid u;
+    return reply_uuid(ctx, uid_uuidv7(&u), &u);
+}
+
+static int Uuidv7Monotonic(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    (void)argv;
+    if (argc != 1)
+        return RedisModule_WrongArity(ctx);
+    uid_uuid u;
+    return reply_uuid(ctx, uid_uuidv7_monotonic_next(&uuidv7_mono, &u), &u);
+}
+
+static int Uuidv7Time(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (argc != 2)
+        return RedisModule_WrongArity(ctx);
+    size_t len;
+    const char *s = RedisModule_StringPtrLen(argv[1], &len);
+    uid_uuid u;
+    uint64_t ms;
+    if (uid_uuid_decode(s, len, &u) != UID_OK)
+        return RedisModule_ReplyWithError(ctx, "ERR invalid UUID");
+    if (uid_uuidv7_timestamp(&u, &ms) != UID_OK)
+        return RedisModule_ReplyWithError(ctx, "ERR not a version 7 UUID");
+    return RedisModule_ReplyWithLongLong(ctx, (long long)ms);
 }
 
 static int SnowflakeGenerate(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
@@ -152,6 +203,8 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
         {"ulid.generate", UlidGenerate},         {"ulid.monotonic", UlidMonotonic},
         {"ulid.time", UlidTime},                 {"snowflake.generate", SnowflakeGenerate},
         {"snowflake.parse", SnowflakeParse},     {"nanoid.generate", NanoidGenerate},
+        {"uuidv4.generate", Uuidv4Generate},     {"uuidv7.generate", Uuidv7Generate},
+        {"uuidv7.monotonic", Uuidv7Monotonic},   {"uuidv7.time", Uuidv7Time},
     };
     for (size_t i = 0; i < sizeof cmds / sizeof cmds[0]; i++) {
         if (RedisModule_CreateCommand(ctx, cmds[i].name, cmds[i].fn, "fast", 0, 0, 0) != REDISMODULE_OK)

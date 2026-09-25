@@ -34,6 +34,24 @@ CREATE FUNCTION ulid_timestamp(uuid) RETURNS timestamptz
 AS 'MODULE_PATHNAME', 'idgenkit_ulid_uuid_timestamp'
 LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
+-- UUIDv7 -----------------------------------------------------------------------
+-- For UUIDv4 use the built-in gen_random_uuid().
+
+CREATE FUNCTION uuidv7_generate() RETURNS uuid
+AS 'MODULE_PATHNAME', 'idgenkit_uuidv7_generate'
+LANGUAGE C VOLATILE PARALLEL SAFE;
+COMMENT ON FUNCTION uuidv7_generate() IS 'RFC 9562 UUIDv7: 48-bit ms timestamp + 74 random bits';
+
+CREATE FUNCTION uuidv7_generate_monotonic() RETURNS uuid
+AS 'MODULE_PATHNAME', 'idgenkit_uuidv7_generate_monotonic'
+LANGUAGE C VOLATILE PARALLEL RESTRICTED;
+COMMENT ON FUNCTION uuidv7_generate_monotonic() IS 'UUIDv7 that strictly increases within the current session';
+
+CREATE FUNCTION uuidv7_timestamp(uuid) RETURNS timestamptz
+AS 'MODULE_PATHNAME', 'idgenkit_uuidv7_timestamp'
+LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION uuidv7_timestamp(uuid) IS 'Creation time of a UUIDv7; error for other versions';
+
 -- Snowflake --------------------------------------------------------------------
 -- Configured with idgenkit.machine_id and idgenkit.snowflake_epoch_ms (server start only).
 

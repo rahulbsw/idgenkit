@@ -26,6 +26,21 @@ expect "ulid.time rejects overflow" 'ERR' "$(cli ulid.time 8ZZZZZZZZZZZZZZZZZZZZ
 a=$(cli ulid.monotonic); b=$(cli ulid.monotonic)
 expect "ulid.monotonic increasing" '^yes$' "$([[ "$b" > "$a" ]] && echo yes || echo "no ($a >= $b)")"
 
+UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-V[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
+expect "uuidv4.generate format" "^${UUID_RE/V/4}\$" "$(cli uuidv4.generate)"
+expect "uuidv7.generate format" "^${UUID_RE/V/7}\$" "$(cli uuidv7.generate)"
+expect "uuidv7.time RFC 9562 example" '^1645557742000$' "$(cli uuidv7.time 017F22E2-79B0-7CC3-98C4-DC0C0C07398F)"
+now_ms=$(python3 -c 'import time; print(time.time_ns() // 1_000_000)')
+ts=$(cli uuidv7.time "$(cli uuidv7.generate)")
+expect "uuidv7 timestamp near now" '^1$' "$(( ts > now_ms - 5000 && ts <= now_ms + 5000 ))"
+expect "uuidv7.time rejects v4" 'ERR' "$(cli uuidv7.time "$(cli uuidv4.generate)" 2>&1)"
+expect "uuidv7.time rejects braces" 'ERR' "$(cli uuidv7.time '{017f22e2-79b0-7cc3-98c4-dc0c0c07398f}' 2>&1)"
+mono=$(for _ in $(seq 2000); do echo uuidv7.monotonic; done | cli)
+expect "uuidv7.monotonic 2000 increasing and unique" '^2000$' \
+  "$(sort -u <<<"$mono" | wc -l | tr -d ' ')$([[ "$(sort <<<"$mono")" == "$mono" ]] || echo ' (out of order)')"
+expect "uuidv4 2000 unique" '^2000$' \
+  "$(for _ in $(seq 2000); do echo uuidv4.generate; done | cli | sort -u | wc -l | tr -d ' ')"
+
 id=$(cli snowflake.generate)
 expect "snowflake.generate integer" '^[0-9]+$' "$id"
 parts=$(cli snowflake.parse "$id" | tr '\n' ' ')

@@ -1,4 +1,4 @@
-comment = 'ULID, Snowflake and Nano ID generators'
+comment = 'ULID, UUIDv7, Snowflake and Nano ID generators'
 default_version = '0.1.0'
 module_pathname = '$libdir/idgenkit'
 relocatable = true

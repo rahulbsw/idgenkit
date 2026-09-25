@@ -30,6 +30,18 @@ FROM (SELECT u, row_number() OVER (ORDER BY u COLLATE "C") AS rn FROM g) a
 JOIN (SELECT u, row_number() OVER (ORDER BY ulid_to_uuid(u)) AS rn FROM g) b USING (u);
 SELECT count(DISTINCT ulid_generate_uuid()) AS distinct_uuids FROM generate_series(1, 10000);
 
+-- UUIDv7
+SELECT uuidv7_generate()::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' AS uuidv7_format;
+SELECT count(DISTINCT uuidv7_generate()) AS distinct_uuidv7s FROM generate_series(1, 10000);
+SELECT abs(extract(epoch FROM uuidv7_timestamp(uuidv7_generate()) - now())) < 5 AS uuidv7_time_is_now;
+-- RFC 9562 appendix A.6
+SELECT uuidv7_timestamp('017f22e2-79b0-7cc3-98c4-dc0c0c07398f') AS rfc_time;
+WITH g AS (SELECT n, uuidv7_generate_monotonic() AS u FROM generate_series(1, 20000) n)
+SELECT bool_and(u > prev) AS uuidv7_monotonic
+FROM (SELECT u, lag(u) OVER (ORDER BY n) AS prev FROM g) s WHERE prev IS NOT NULL;
+SELECT uuidv7_timestamp(gen_random_uuid());
+SELECT uuidv7_timestamp(NULL) IS NULL AS uuidv7_strict_null;
+
 -- Snowflake
 SELECT current_setting('idgenkit.machine_id') AS machine_id,
        current_setting('idgenkit.snowflake_epoch_ms') AS epoch_ms;

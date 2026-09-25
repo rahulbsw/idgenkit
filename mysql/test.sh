@@ -52,6 +52,25 @@ expect "ulid_timestamp invalid is NULL" '^NULL$' "$(q "SELECT ulid_timestamp('8Z
 expect "ulid_timestamp NULL" '^NULL$' "$(q "SELECT ulid_timestamp(NULL)")"
 expect "ulid binary round trip" '^1 16$' \
   "$(q "SELECT bin_to_ulid(ulid_to_bin(u)) = u, LENGTH(ulid_to_bin(u)) FROM (SELECT ulid_generate() u) t" | tr '\t' ' ')"
+UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-V[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
+expect "uuidv4_generate format" "^${UUID_RE/V/4}\$" "$(q "SELECT uuidv4_generate()")"
+expect "uuidv7_generate format" "^${UUID_RE/V/7}\$" "$(q "SELECT uuidv7_generate()")"
+materialize "uuidv4_generate()"
+expect "uuidv4_generate per row" '^20000$' "$(q "SELECT COUNT(DISTINCT v) FROM ids")"
+materialize "uuidv7_generate()"
+expect "uuidv7_generate per row" '^20000$' "$(q "SELECT COUNT(DISTINCT v) FROM ids")"
+materialize "uuidv7_generate_monotonic()"
+expect "uuidv7_generate_monotonic ordered" '^0$' \
+  "$(q "SELECT COUNT(*) FROM (SELECT v, LAG(v) OVER (ORDER BY n) p FROM ids) b WHERE p >= v")"
+expect "uuidv7 UUID_TO_BIN sorts like text" '^0$' \
+  "$(q "SELECT COUNT(*) FROM (SELECT v, LAG(v) OVER (ORDER BY UUID_TO_BIN(v)) p FROM ids) b WHERE p >= v")"
+expect "uuidv7_timestamp RFC 9562 example" '^1645557742000 1645557742000$' \
+  "$(q "SELECT uuidv7_timestamp('017F22E2-79B0-7CC3-98C4-DC0C0C07398F'), uuidv7_timestamp(UUID_TO_BIN('017f22e2-79b0-7cc3-98c4-dc0c0c07398f'))" | tr '\t' ' ')"
+expect "uuidv7_timestamp is now" '^1$' \
+  "$(q "SELECT ABS(uuidv7_timestamp(uuidv7_generate()) - UNIX_TIMESTAMP(NOW(3)) * 1000) < 5000")"
+expect "uuidv7_timestamp of v4 is NULL" '^NULL$' "$(q "SELECT uuidv7_timestamp(uuidv4_generate())")"
+expect "uuidv7_timestamp invalid is NULL" '^NULL$' "$(q "SELECT uuidv7_timestamp('{017f22e2-79b0-7cc3-98c4-dc0c0c07398f}')")"
+
 materialize "snowflake_generate()"
 expect "snowflake per row unique" '^20000$' "$(q "SELECT COUNT(DISTINCT v) FROM ids")"
 expect "snowflake ordered" '^0$' \
@@ -81,7 +100,8 @@ expect "arity checked" 'ERROR' "$(q "SELECT ulid_generate(1)")"
 if [[ "${1:-}" == "--bench" ]]; then
   N=${BENCH_N:-1000000}
   echo "# MySQL $(q "SELECT VERSION()"), BENCHMARK($N, expr), single connection"
-  for expr in "UUID()" "ulid_generate()" "ulid_generate_monotonic()" "snowflake_generate()" \
+  for expr in "UUID()" "ulid_generate()" "ulid_generate_monotonic()" "uuidv4_generate()" \
+              "uuidv7_generate()" "uuidv7_generate_monotonic()" "snowflake_generate()" \
               "nanoid_generate()" "nanoid_generate(21, '0123456789abcdef')"; do
     start=$(python3 -c 'import time; print(time.time_ns())')
     q "SELECT BENCHMARK($N, $expr)" >/dev/null

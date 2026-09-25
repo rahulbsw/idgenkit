@@ -1,5 +1,5 @@
 /*
- * PostgreSQL extension: ULID, Snowflake and Nano ID generation.
+ * PostgreSQL extension: ULID, UUIDv7, Snowflake and Nano ID generation.
  *
  * Snowflake state must be shared by every backend process, so it lives in
  * shared memory: static shared memory when loaded via shared_preload_libraries,
@@ -44,6 +44,7 @@ typedef struct SnowflakeShared {
 
 static SnowflakeShared *snowflake_shared = NULL;
 static uid_ulid_monotonic ulid_mono;
+static uid_uuidv7_monotonic uuidv7_mono;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 #if PG_VERSION_NUM >= 150000
@@ -262,6 +263,45 @@ Datum idgenkit_ulid_uuid_timestamp(PG_FUNCTION_ARGS) {
 
     memcpy(u.b, uuid->data, UUID_LEN);
     PG_RETURN_TIMESTAMPTZ(unix_ms_to_timestamptz(uid_ulid_timestamp(&u)));
+}
+
+/* ---- UUIDv7 (v4 is the built-in gen_random_uuid()) ------------------------------ */
+
+static pg_uuid_t *uid_uuid_to_pg(const uid_uuid *u) {
+    pg_uuid_t *uuid = palloc(sizeof(pg_uuid_t));
+
+    memcpy(uuid->data, u->b, UUID_LEN);
+    return uuid;
+}
+
+PG_FUNCTION_INFO_V1(idgenkit_uuidv7_generate);
+Datum idgenkit_uuidv7_generate(PG_FUNCTION_ARGS) {
+    uid_uuid u;
+
+    check_rc(uid_uuidv7(&u));
+    PG_RETURN_UUID_P(uid_uuid_to_pg(&u));
+}
+
+PG_FUNCTION_INFO_V1(idgenkit_uuidv7_generate_monotonic);
+Datum idgenkit_uuidv7_generate_monotonic(PG_FUNCTION_ARGS) {
+    uid_uuid u;
+
+    check_rc(uid_uuidv7_monotonic_next(&uuidv7_mono, &u));
+    PG_RETURN_UUID_P(uid_uuid_to_pg(&u));
+}
+
+PG_FUNCTION_INFO_V1(idgenkit_uuidv7_timestamp);
+Datum idgenkit_uuidv7_timestamp(PG_FUNCTION_ARGS) {
+    pg_uuid_t *uuid = PG_GETARG_UUID_P(0);
+    uid_uuid u;
+    uint64 ms;
+
+    memcpy(u.b, uuid->data, UUID_LEN);
+    if (uid_uuidv7_timestamp(&u, &ms) != UID_OK)
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("uuid is version %u, not version 7", uid_uuid_version(&u))));
+    PG_RETURN_TIMESTAMPTZ(unix_ms_to_timestamptz(ms));
 }
 
 /* ---- Snowflake ---------------------------------------------------------------- */
