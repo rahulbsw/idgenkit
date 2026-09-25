@@ -35,6 +35,23 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y redis-server redis-tools
       - run: make test-redis
 
+  mysql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: sudo apt-get update && sudo apt-get install -y mysql-server libmysqlclient-dev
+      # Ubuntu's AppArmor profile confines mysqld to /var/lib/mysql; test.sh runs a
+      # throwaway server with its datadir and plugin_dir under mysql/build/.
+      - run: |
+          sudo systemctl stop mysql || true
+          if [ -f /etc/apparmor.d/usr.sbin.mysqld ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.mysqld
+          fi
+      - run: mysqld --version && make test-mysql
+      - if: failure()
+        run: cat mysql/build/mysql-test/init.log mysql/build/mysql-test/error.log || true
+
   postgres:
     runs-on: ubuntu-latest
     strategy:
