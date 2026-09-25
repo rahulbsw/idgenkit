@@ -4,8 +4,7 @@ Builds N IDs per format in generation order, as a steady stream at a fixed
 rate with synthetic timestamps (the same clock for every format), writes each
 column as fixed-width binary or ASCII text, and compresses it with zlib and
 LZMA. This approximates what a columnar file (Parquet, ORC) does with a
-general-purpose codec. It does not model Parquet's dictionary or delta
-encodings, which favour integer columns even more.
+general-purpose codec. parquet.py measures real Parquet encodings.
 
     python3 bench/storage/compression.py [N]
 """
@@ -72,6 +71,14 @@ def ulid_text(ts: list[int]) -> bytes:
     ).encode()
 
 
+def nanoid_text(ts: list[int]) -> bytes:
+    return "".join(nanoid() for _ in ts).encode()
+
+
+def uuid_v4_text(ts: list[int]) -> bytes:
+    return "".join(str(uuid.uuid4()) for _ in ts).encode()
+
+
 def snowflake(ts: list[int]) -> bytes:
     out = bytearray()
     seq, last = 0, -1
@@ -94,8 +101,8 @@ FORMATS = [
     ("ulid (16 B)", lambda ts: ulid_binary(ts, monotonic=False)),
     ("ulid monotonic (16 B)", lambda ts: ulid_binary(ts, monotonic=True)),
     ("ulid text (26 chars)", ulid_text),
-    ("nanoid text (21 chars)", lambda ts: "".join(nanoid() for _ in ts).encode()),
-    ("uuid v4 text (36 chars)", lambda ts: "".join(str(uuid.uuid4()) for _ in ts).encode()),
+    ("nanoid text (21 chars)", nanoid_text),
+    ("uuid v4 text (36 chars)", uuid_v4_text),
 ]
 
 

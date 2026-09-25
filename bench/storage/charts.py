@@ -1,7 +1,7 @@
 """Renders the storage benchmark results as SVG bar charts for the docs site.
 
     python3 bench/storage/charts.py
-reads  bench/results/storage-postgres18.txt and bench/results/storage-compression.txt
+reads  bench/results/storage-{postgres18,compression,parquet}.txt
 writes docs/assets/*.svg
 """
 
@@ -20,9 +20,11 @@ BAR = "#4493f8"
 HIGHLIGHT = "#d29922"
 
 
-def bar_chart(title: str, unit: str, rows: list[tuple[str, float, str]], highlight: set[str]) -> str:
+def bar_chart(
+    title: str, unit: str, rows: list[tuple[str, float, str]], highlight: set[str], note_w: int = 190,
+) -> str:
     label_w, bar_w, row_h, top = 250, 380, 26, 44
-    width = label_w + bar_w + 190
+    width = label_w + bar_w + note_w
     height = top + row_h * len(rows) + 12
     peak = max(v for _, v, _ in rows) or 1
     parts = [
@@ -62,6 +64,16 @@ def compression_rows(section: str) -> list[tuple[str, float, float]]:
     return rows
 
 
+def parquet_rows(section: str) -> dict[str, dict[str, float]]:
+    text = (RESULTS / "storage-parquet.txt").read_text()
+    block = text.split(f"## steady {section}")[1].split("##")[0]
+    rows: dict[str, dict[str, float]] = {}
+    for line in block.strip().splitlines()[1:]:
+        fmt, layout, size = (c.strip() for c in line.split("|"))
+        rows.setdefault(fmt, {})[layout] = float(size)
+    return rows
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     pg = postgres_rows()
@@ -89,6 +101,16 @@ def main() -> None:
             [(label, z, f"lzma {x:g} B") for label, z, x in rows],
             {label for label, z, _ in rows if z >= 15},
         ))
+    best = []
+    for fmt, layouts in parquet_rows("1,000 IDs/s").items():
+        layout, size = min(layouts.items(), key=lambda kv: kv[1])
+        best.append((fmt, size, f'{layout}; defaults {layouts["defaults (dictionary, snappy)"]:g} B'))
+    (OUT / "parquet-1k.svg").write_text(bar_chart(
+        "Parquet bytes per ID with the best layout, steady 1,000 IDs/s (lower is better)", "B",
+        best,
+        {fmt for fmt, size, _ in best if size >= 15},
+        note_w=360,
+    ))
     print("wrote", ", ".join(sorted(p.name for p in OUT.glob("*.svg"))))
 
 

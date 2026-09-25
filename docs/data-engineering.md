@@ -23,6 +23,13 @@ that you can rerun on your own hardware.
    clock. Each column is stored as fixed-width binary or ASCII and compressed
    with zlib and LZMA, as a stand-in for a columnar file with a general-purpose
    codec.
+3. **Parquet encodings and row-group pruning**
+   ([`parquet.py`](https://github.com/rahulbsw/idgenkit/blob/main/bench/storage/parquet.py)).
+   The same million-ID columns are written as real Parquet files with pyarrow
+   25.0.1, using pyarrow's defaults and then the encodings Parquet offers for
+   each physical type. Each column is also written in 100 row groups, and we count
+   how many a point lookup must read once min/max statistics have ruled out the
+   rest.
 
 The runs used Docker on an Apple M-series Mac (4 CPUs, 6 GB for the VM) with
 the default `shared_buffers = 128MB`. Absolute times will differ on your
@@ -144,6 +151,93 @@ exploits the same property before any codec runs.
 like a sequence (0.4 bytes). The flip side is predictability: within a
 millisecond, the next ID can be guessed from the previous one.
 
+## Results: Parquet encodings
+
+File bytes per ID at 1,000 IDs per second, with zstd level 3; lower is better.
+The floor is the format's random bits divided by eight: no encoding can store
+a column in less. The last column shows how many of 100 row groups a lookup for
+one existing ID has to read after min/max pruning.
+
+| Format | pyarrow defaults | Plain + zstd | Best layout | Floor | Row groups per lookup |
+|---|---|---|---|---|---|
+| `bigint` sequence (baseline) | 4.28 | 1.03 | **0.01** delta | 0 | 1 |
+| Snowflake `INT64` | 4.03 | 0.84 | **0.01** delta | about 0 | 1 |
+| UUIDv7, 16 bytes | 14.28 | 12.14 | **9.39** byte stream split | 9.25 | 1 |
+| UUIDv7, rows shuffled | 15.61 | 14.06 | 12.35 byte stream split | 9.25 | <span class="bad">100</span> |
+| ULID, 16 bytes | 14.28 | 12.15 | **10.01** split column | 10.0 | 1 |
+| ULID text, 26 chars | 20.65 | 12.87 | 10.72 delta | 10.0 | 1 |
+| UUIDv4, 16 bytes | 16.14 | 16.00 | 16.00 (nothing helps) | 15.25 | <span class="bad">100</span> |
+| Nano ID text, 21 chars | 23.36 | 16.51 | 15.89 delta | 15.75 | <span class="bad">100</span> |
+| UUIDv4 text, 36 chars | 35.76 | 20.55 | 19.31 delta | 15.25 | <span class="bad">100</span> |
+
+Monotonic ULID matches plain ULID at 1,000 IDs per second. At 100,000 IDs per
+second it drops to 0.29 bytes per ID with byte stream split, because nearly
+every ID is the previous one plus one.
+
+<figure>
+  <img src="assets/parquet-1k.svg" alt="Bar chart of Parquet bytes per ID with the best layout for each ID type">
+  <figcaption>Best Parquet layout per format, with pyarrow's default size for comparison. Orange bars are formats with no structure left to compress.</figcaption>
+</figure>
+
+The layouts are:
+
+- **Defaults:** dictionary encoding with snappy compression, which is what
+  pyarrow, and Spark with its default codec, write unless told otherwise.
+- **Plain + zstd:** no dictionary, raw values, zstd.
+- **Delta:** `DELTA_BINARY_PACKED` for integers, which stores the differences
+  between consecutive values; `DELTA_BYTE_ARRAY` for strings, which stores the
+  prefix each value shares with the previous one.
+- **Byte stream split:** `BYTE_STREAM_SPLIT` on the 16-byte column. It writes
+  byte 0 of every value, then byte 1, and so on, so the slowly changing timestamp
+  bytes sit next to each other and compress away.
+- **Split column:** the ID stored as two columns, the 48-bit millisecond
+  timestamp as a delta-encoded `INT64` and the remaining 10 bytes raw.
+
+### What the numbers show
+
+**The defaults are wrong for ID columns.** Every value in a primary-key column is
+unique, so a dictionary saves nothing: the writer builds one, gives up when it
+grows too large, and falls back to plain values, and snappy barely compresses
+them. Turning dictionaries off for ID columns and using zstd cut the file by 15%
+for UUIDv7, 38% for ULID text and 76% for a sequence. This is a writer setting
+(`use_dictionary`, `compression` in pyarrow; `parquet.enable.dictionary` and
+`spark.sql.parquet.compression.codec` in Spark), not a change to the IDs.
+
+**Existing encodings already reach the floor.** Byte stream split brings UUIDv7
+to 9.39 bytes per ID, 1.5% above its 9.25-byte floor, and ULID to 10.03 against
+10.0. What's left is the random bits, which no encoding can shrink. An encoding
+designed for these formats could gain at most that last 1–2%. Byte stream split
+for fixed-length columns was added to the Parquet format in 2024, so check that
+every engine reading the files supports it before enabling it. The split-column
+layout gets the same result for ULID with encodings every reader supports. It
+also gives you a queryable millisecond column, but costs a little more for
+UUIDv7, whose fixed version bits stay in the raw part.
+
+**Integers are in a different league.** Delta encoding stores a Snowflake or
+sequence column in 0.01 bytes per ID: a million IDs take about 10 KB. Real
+traffic is burstier than a steady synthetic stream, but the gap to any 128-bit
+format stays large.
+
+**Order matters as much as format.** The same UUIDv7 values written in random
+row order take 12.35 bytes per ID instead of 9.39, and a lookup has to read all
+100 row groups instead of one. Data arriving from many producers, or rewritten by
+a shuffle, is in that state until it's sorted. Sorting by ID when writing, or
+with an Iceberg sort order or Delta Z-ordering, restores both the compression
+and the pruning.
+
+**Random IDs can't be pruned by ID at all.** Every row group of a UUIDv4 or
+Nano ID column spans nearly the whole value range, so min/max statistics never
+rule one out. Bloom filters, which Parquet also supports, are the tool for point
+lookups on those columns. We didn't measure them.
+
+**Can a new technique do better?** Only by putting fewer random bits into each
+ID, since the measured layouts are already at the floor for the bits there are.
+Monotonic ULID and Snowflake are the two ways to do that here. So are designs
+like MongoDB's ObjectId or TSID, where each process picks a random prefix once
+and then counts. The cost is that consecutive IDs from one generator become
+predictable, and uniqueness then depends on how many prefix bits there are.
+That's a design trade-off, not an encoding trick.
+
 ## What this means for data pipelines
 
 ### Data skipping in Parquet, Iceberg and Delta
@@ -230,9 +324,9 @@ collations cost more and can change the sort order.
 - One machine, one PostgreSQL version and bulk single-statement inserts. OLTP
   traffic arrives in many small transactions; the ordered-versus-random gap
   persists, but the absolute numbers change.
-- The compression test uses general-purpose codecs on raw columns. Real Parquet
-  files add dictionary and delta encodings; dictionaries don't help columns
-  where every value is unique, and delta encoding helps integer columns further.
+- The Parquet test uses one writer (pyarrow), steady synthetic streams and
+  single-column files. Other writers choose encodings differently, and we
+  measured size and pruning only, not read or write speed, or Bloom filters.
 - Lookups by a single ID aren't shown. They're similar for every format of the
   same byte width; smaller indexes need fewer page reads when the index doesn't
   fit in memory.
@@ -242,5 +336,8 @@ Rerun everything with:
 ```sh
 N=5000000 ./bench/storage/pg_storage.sh      # needs Docker
 python3 bench/storage/compression.py 1000000
+python3 -m venv build/bench-venv             # pyarrow, for the Parquet test only
+build/bench-venv/bin/pip install -r bench/storage/requirements.txt
+build/bench-venv/bin/python bench/storage/parquet.py 1000000
 python3 bench/storage/charts.py              # redraws the charts on this page
 ```

@@ -1,0 +1,88 @@
+# 1,000,000 IDs per column; Parquet file bytes per ID (pyarrow 25.0.1, zstd level 3, one row group)
+
+## steady 1,000 IDs/s
+format                      | layout                        | B/ID
+bigint sequence (baseline)  | defaults (dictionary, snappy) | 4.28
+bigint sequence (baseline)  | plain + zstd                  | 1.03
+bigint sequence (baseline)  | delta + zstd                  | 0.01
+snowflake                   | defaults (dictionary, snappy) | 4.03
+snowflake                   | plain + zstd                  | 0.84
+snowflake                   | delta + zstd                  | 0.01
+uuid v4                     | defaults (dictionary, snappy) | 16.14
+uuid v4                     | plain + zstd                  | 16.00
+uuid v4                     | byte_stream_split + zstd      | 16.00
+uuid v7                     | defaults (dictionary, snappy) | 14.28
+uuid v7                     | plain + zstd                  | 12.14
+uuid v7                     | byte_stream_split + zstd      | 9.39
+uuid v7                     | split: ms delta + rest zstd   | 10.01
+uuid v7, rows shuffled      | defaults (dictionary, snappy) | 15.61
+uuid v7, rows shuffled      | plain + zstd                  | 14.06
+uuid v7, rows shuffled      | byte_stream_split + zstd      | 12.35
+uuid v7, rows shuffled      | split: ms delta + rest zstd   | 12.67
+ulid                        | defaults (dictionary, snappy) | 14.28
+ulid                        | plain + zstd                  | 12.15
+ulid                        | byte_stream_split + zstd      | 10.03
+ulid                        | split: ms delta + rest zstd   | 10.01
+ulid monotonic              | defaults (dictionary, snappy) | 14.28
+ulid monotonic              | plain + zstd                  | 12.15
+ulid monotonic              | byte_stream_split + zstd      | 10.03
+ulid monotonic              | split: ms delta + rest zstd   | 10.01
+ulid text                   | defaults (dictionary, snappy) | 20.65
+ulid text                   | plain + zstd                  | 12.87
+ulid text                   | delta + zstd                  | 10.72
+nanoid text                 | defaults (dictionary, snappy) | 23.36
+nanoid text                 | plain + zstd                  | 16.51
+nanoid text                 | delta + zstd                  | 15.89
+uuid v4 text                | defaults (dictionary, snappy) | 35.76
+uuid v4 text                | plain + zstd                  | 20.55
+uuid v4 text                | delta + zstd                  | 19.31
+
+## row groups read per point lookup (of 100), steady 1,000 IDs/s
+format                      | row groups
+bigint sequence (baseline)  | 1.0
+snowflake                   | 1.0
+uuid v4                     | 100.0
+uuid v7                     | 1.0
+uuid v7, rows shuffled      | 100.0
+ulid                        | 1.0
+ulid monotonic              | 1.0
+ulid text                   | 1.0
+nanoid text                 | 100.0
+uuid v4 text                | 100.0
+
+## steady 100,000 IDs/s
+format                      | layout                        | B/ID
+bigint sequence (baseline)  | defaults (dictionary, snappy) | 4.28
+bigint sequence (baseline)  | plain + zstd                  | 1.03
+bigint sequence (baseline)  | delta + zstd                  | 0.01
+snowflake                   | defaults (dictionary, snappy) | 4.29
+snowflake                   | plain + zstd                  | 0.90
+snowflake                   | delta + zstd                  | 0.02
+uuid v4                     | defaults (dictionary, snappy) | 16.14
+uuid v4                     | plain + zstd                  | 16.00
+uuid v4                     | byte_stream_split + zstd      | 16.00
+uuid v7                     | defaults (dictionary, snappy) | 13.46
+uuid v7                     | plain + zstd                  | 11.33
+uuid v7                     | byte_stream_split + zstd      | 9.38
+uuid v7                     | split: ms delta + rest zstd   | 10.02
+uuid v7, rows shuffled      | defaults (dictionary, snappy) | 14.73
+uuid v7, rows shuffled      | plain + zstd                  | 12.16
+uuid v7, rows shuffled      | byte_stream_split + zstd      | 11.39
+uuid v7, rows shuffled      | split: ms delta + rest zstd   | 11.90
+ulid                        | defaults (dictionary, snappy) | 13.47
+ulid                        | plain + zstd                  | 11.36
+ulid                        | byte_stream_split + zstd      | 10.02
+ulid                        | split: ms delta + rest zstd   | 10.02
+ulid monotonic              | defaults (dictionary, snappy) | 4.95
+ulid monotonic              | plain + zstd                  | 1.25
+ulid monotonic              | byte_stream_split + zstd      | 0.29
+ulid monotonic              | split: ms delta + rest zstd   | 1.13
+ulid text                   | defaults (dictionary, snappy) | 19.30
+ulid text                   | plain + zstd                  | 12.02
+ulid text                   | delta + zstd                  | 10.30
+nanoid text                 | defaults (dictionary, snappy) | 23.36
+nanoid text                 | plain + zstd                  | 16.51
+nanoid text                 | delta + zstd                  | 15.89
+uuid v4 text                | defaults (dictionary, snappy) | 35.76
+uuid v4 text                | plain + zstd                  | 20.55
+uuid v4 text                | delta + zstd                  | 19.32
