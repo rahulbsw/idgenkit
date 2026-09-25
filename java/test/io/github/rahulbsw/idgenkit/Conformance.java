@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongSupplier;
 
 /** Dependency-free test runner: java Conformance <testdata-dir>. */
 public final class Conformance {
@@ -23,7 +24,9 @@ public final class Conformance {
         run("ulidMonotonic", Conformance::ulidMonotonic);
         run("ulidMonotonicOverflow", Conformance::ulidMonotonicOverflow);
         run("ulidMonotonicConcurrent", Conformance::ulidMonotonicConcurrent);
+        run("ulidMonotonicVectors", Conformance::ulidMonotonicVectors);
         run("snowflakeVectors", Conformance::snowflakeVectors);
+        run("snowflakeSequenceVectors", Conformance::snowflakeSequenceVectors);
         run("snowflakeValidation", Conformance::snowflakeValidation);
         run("snowflakeOrdered", Conformance::snowflakeOrdered);
         run("snowflakeClockBackwards", Conformance::snowflakeClockBackwards);
@@ -81,6 +84,80 @@ public final class Conformance {
             b[i] = (byte) Integer.parseInt(s.substring(2 * i, 2 * i + 2), 16);
         }
         return b;
+    }
+
+    static void ulidMonotonicVectors() throws IOException {
+        List<String[]> rows = vectors("ulid_monotonic.txt");
+        check(rows.size() > 10, "too few ulid_monotonic vectors");
+        MonotonicUlid g = new MonotonicUlid();
+        for (String[] r : rows) {
+            if (r[0].equals("reset")) {
+                g = new MonotonicUlid();
+                continue;
+            }
+            String where = String.join(" ", r);
+            boolean[] drew = {false};
+            MonotonicUlid gen = g;
+            Runnable step = () -> {
+                Ulid u = gen.next(Long.parseLong(r[1]), buf -> {
+                    drew[0] = true;
+                    if (!r[2].equals("-")) {
+                        System.arraycopy(hex(r[2]), 0, buf, 0, buf.length);
+                    }
+                });
+                check(u.toString().equals(r[3]), where + ": got " + u);
+            };
+            if (r[3].equals("error")) {
+                throwsIllegal(step, where);
+            } else {
+                step.run();
+            }
+            check(!(r[2].equals("-") && drew[0]), where + ": drew randomness");
+        }
+    }
+
+    static LongSupplier scriptedClock(String readings) {
+        long[] values = Arrays.stream(readings.split(",")).mapToLong(Long::parseLong).toArray();
+        int[] i = {0};
+        return () -> {
+            long v = values[i[0]];
+            i[0] = Math.min(i[0] + 1, values.length - 1);
+            return v;
+        };
+    }
+
+    static void snowflakeSequenceVectors() throws IOException {
+        List<String[]> rows = vectors("snowflake_sequence.txt");
+        check(rows.size() > 10, "too few snowflake_sequence vectors");
+        Snowflake g = null;
+        long prev = 0;
+        for (String[] r : rows) {
+            String where = String.join(" ", r);
+            switch (r[0]) {
+                case "gen" -> {
+                    g = new Snowflake(Integer.parseInt(r[1]), Long.parseLong(r[2]));
+                    prev = 0;
+                }
+                case "fill" -> {
+                    long clock = Long.parseLong(r[2]);
+                    for (int n = Integer.parseInt(r[1]); n > 0; n--) {
+                        long id = g.nextId(() -> clock);
+                        check(Long.compareUnsigned(id, prev) > 0, where + ": " + id + " after " + prev);
+                        prev = id;
+                    }
+                }
+                case "next" -> {
+                    Snowflake gen = g;
+                    if (r[2].equals("error")) {
+                        throwsIllegal(() -> gen.nextId(scriptedClock(r[1])), where);
+                    } else {
+                        prev = gen.nextId(scriptedClock(r[1]));
+                        check(prev == Long.parseUnsignedLong(r[2]), where + ": got " + Long.toUnsignedString(prev));
+                    }
+                }
+                default -> throw new AssertionError("bad line " + where);
+            }
+        }
     }
 
     static void ulidVectors() throws IOException {

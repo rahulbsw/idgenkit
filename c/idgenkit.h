@@ -29,6 +29,9 @@ const char *uid_strerror(int err);
 int uid_random_bytes(uint8_t *buf, size_t len);
 uint64_t uid_now_ms(void);
 
+typedef int (*uid_random_fn)(void *ctx, uint8_t *buf, size_t len);
+typedef uint64_t (*uid_clock_fn)(void *ctx);
+
 /* ---- ULID (https://github.com/ulid/spec) -------------------------------- */
 
 #define UID_ULID_LEN 26
@@ -49,6 +52,8 @@ int uid_ulid_new(uid_ulid *out);
 int uid_ulid_from_parts(uid_ulid *out, uint64_t timestamp_ms, const uint8_t random[10]);
 int uid_ulid_monotonic_next(uid_ulid_monotonic *state, uid_ulid *out);
 int uid_ulid_monotonic_next_at(uid_ulid_monotonic *state, uint64_t now_ms, uid_ulid *out);
+int uid_ulid_monotonic_next_custom_random(uid_ulid_monotonic *state, uint64_t now_ms,
+                                          uid_random_fn random, void *ctx, uid_ulid *out);
 uint64_t uid_ulid_timestamp(const uid_ulid *u);
 /* Writes exactly UID_ULID_LEN bytes; does not NUL-terminate. */
 void uid_ulid_encode(const uid_ulid *u, char out[UID_ULID_LEN]);
@@ -68,6 +73,8 @@ int uid_ulid_decode(const char *text, size_t len, uid_ulid *out);
  * caller using the same machine id.
  */
 int uid_snowflake_next(uint64_t *state, uint32_t machine_id, uint64_t epoch_ms, uint64_t *out);
+int uid_snowflake_next_clock(uint64_t *state, uint32_t machine_id, uint64_t epoch_ms,
+                             uid_clock_fn clock, void *ctx, uint64_t *out);
 int uid_snowflake_compose(uint64_t timestamp_ms, uint32_t machine_id, uint32_t sequence,
                           uint64_t epoch_ms, uint64_t *out);
 void uid_snowflake_parse(uint64_t id, uint64_t epoch_ms, uint64_t *timestamp_ms,
@@ -77,8 +84,6 @@ void uid_snowflake_parse(uint64_t id, uint64_t epoch_ms, uint64_t *timestamp_ms,
 
 #define UID_NANOID_DEFAULT_SIZE 21
 extern const char uid_nanoid_url_alphabet[];
-
-typedef int (*uid_random_fn)(void *ctx, uint8_t *buf, size_t len);
 
 /* Writes exactly `size` bytes to out (no NUL). The alphabet must be 1..256
  * ASCII bytes; multi-byte symbols are rejected with UID_ERR_INVALID. */

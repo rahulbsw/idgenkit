@@ -1,5 +1,7 @@
 package io.github.rahulbsw.idgenkit;
 
+import java.util.function.Consumer;
+
 /**
  * Thread-safe generator of strictly increasing ULIDs.
  *
@@ -14,8 +16,11 @@ public final class MonotonicUlid {
     /**
      * @throws IllegalStateException if 2^80 ULIDs are requested within one millisecond
      */
-    public synchronized Ulid next() {
-        long now = System.currentTimeMillis();
+    public Ulid next() {
+        return next(System.currentTimeMillis(), Rng::fill);
+    }
+
+    synchronized Ulid next(long now, Consumer<byte[]> fill) {
         Ulid prev = last;
         if (prev != null && now <= prev.timestamp()) {
             long msb = prev.mostSignificantBits();
@@ -30,7 +35,7 @@ public final class MonotonicUlid {
             return last;
         }
         byte[] r = new byte[10];
-        Rng.fill(r);
+        fill.accept(r);
         last = Ulid.of(now, r);
         return last;
     }

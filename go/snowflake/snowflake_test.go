@@ -49,6 +49,58 @@ func TestVectors(t *testing.T) {
 	}
 }
 
+func scriptedClock(readings []uint64) func() uint64 {
+	return func() uint64 {
+		v := readings[0]
+		if len(readings) > 1 {
+			readings = readings[1:]
+		}
+		return v
+	}
+}
+
+func TestSequenceVectors(t *testing.T) {
+	rows := vectors(t, "snowflake_sequence.txt")
+	var g *Generator
+	var prev uint64
+	for _, r := range rows {
+		switch r[0] {
+		case "gen":
+			g, _ = New(uint16(u64(r[1])), u64(r[2]))
+			prev = 0
+		case "fill":
+			clock := func() uint64 { return u64(r[2]) }
+			for i := u64(r[1]); i > 0; i-- {
+				id, err := g.next(clock)
+				if err != nil || id <= prev {
+					t.Fatalf("%v: got %d, %v after %d", r, id, err, prev)
+				}
+				prev = id
+			}
+		case "next":
+			var readings []uint64
+			for _, s := range strings.Split(r[1], ",") {
+				readings = append(readings, u64(s))
+			}
+			id, err := g.next(scriptedClock(readings))
+			if r[2] == "error" {
+				if err == nil {
+					t.Fatalf("%v: got %d, want an error", r, id)
+				}
+			} else if err != nil || id != u64(r[2]) {
+				t.Fatalf("%v: got %d, %v", r, id, err)
+			} else {
+				prev = id
+			}
+		default:
+			t.Fatalf("bad line %v", r)
+		}
+	}
+	if len(rows) < 10 {
+		t.Fatal("too few snowflake_sequence vectors")
+	}
+}
+
 func TestValidation(t *testing.T) {
 	if _, err := New(1024, 0); err != ErrMachineID {
 		t.Fatal("expected ErrMachineID")

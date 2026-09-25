@@ -55,3 +55,14 @@ pub(crate) fn now_ms() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+pub(crate) fn test_vectors(name: &str) -> Vec<Vec<String>> {
+    let path = format!("{}/../testdata/{name}", env!("CARGO_MANIFEST_DIR"));
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| l.split_whitespace().map(String::from).collect())
+        .collect()
+}

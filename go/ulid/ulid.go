@@ -178,7 +178,10 @@ func NewMonotonic() *Monotonic { return &Monotonic{} }
 // Next returns the next ULID, or ErrMonotonic if 2^80 IDs were requested in a
 // single millisecond.
 func (m *Monotonic) Next() (ULID, error) {
-	now := nowMs()
+	return m.next(nowMs(), fillRandom)
+}
+
+func (m *Monotonic) next(now uint64, fill func([]byte)) (ULID, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.primed && now <= m.lastMs {
@@ -200,6 +203,6 @@ func (m *Monotonic) Next() (ULID, error) {
 	m.lastMs = now
 	m.primed = true
 	putTime(&m.last, now)
-	fillRandom(m.last[6:])
+	fill(m.last[6:])
 	return m.last, nil
 }

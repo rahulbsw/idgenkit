@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 __all__ = ["Snowflake", "SnowflakeParts", "compose", "parse"]
 
@@ -74,26 +74,29 @@ class Snowflake:
         self.machine_id = machine_id
         self.epoch_ms = epoch_ms
         self._lock = threading.Lock()
-        self._last_ms = -1
+        self._last_ms = 0
         self._sequence = 0
 
     def next_id(self) -> int:
+        return self._next_id(_now_ms)
+
+    def _next_id(self, clock: Callable[[], int]) -> int:
         with self._lock:
-            now = _now_ms()
-            if now > self._last_ms:
-                self._last_ms = now
-                self._sequence = 0
-            elif self._sequence < MAX_SEQUENCE:
-                self._sequence += 1
-            else:
-                while now <= self._last_ms:
-                    now = _now_ms()
-                self._last_ms = now
-                self._sequence = 0
-            delta = self._last_ms - self.epoch_ms
-            if not 0 <= delta <= MAX_TIMESTAMP_DELTA:
-                raise OverflowError("current time is outside the 42-bit range for this epoch")
-            return (delta << _TIMESTAMP_SHIFT) | (self.machine_id << _MACHINE_SHIFT) | self._sequence
+            while True:
+                now = clock()
+                if now > self._last_ms:
+                    ms, seq = now, 0
+                elif self._sequence < MAX_SEQUENCE:
+                    ms, seq = self._last_ms, self._sequence + 1
+                else:
+                    while clock() <= self._last_ms:
+                        pass
+                    continue
+                delta = ms - self.epoch_ms
+                if not 0 <= delta <= MAX_TIMESTAMP_DELTA:
+                    raise OverflowError("current time is outside the 42-bit range for this epoch")
+                self._last_ms, self._sequence = ms, seq
+                return (delta << _TIMESTAMP_SHIFT) | (self.machine_id << _MACHINE_SHIFT) | seq
 
     def parse(self, snowflake_id: int) -> SnowflakeParts:
         return parse(snowflake_id, self.epoch_ms)

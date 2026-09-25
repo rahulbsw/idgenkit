@@ -133,7 +133,10 @@ impl MonotonicGenerator {
     }
 
     pub fn next(&self) -> Result<Ulid, Error> {
-        let now = now_ms();
+        self.next_at(now_ms(), rng::fill)
+    }
+
+    pub(crate) fn next_at(&self, now: u64, fill: impl FnOnce(&mut [u8])) -> Result<Ulid, Error> {
         let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(prev) = *last {
             if now <= prev.timestamp_ms() {
@@ -149,9 +152,43 @@ impl MonotonicGenerator {
             return Err(Error::TimeRange);
         }
         let mut r = [0u8; 16];
-        rng::fill(&mut r[6..]);
+        fill(&mut r[6..]);
         let next = Ulid(((now as u128) << RANDOM_BITS) | u128::from_be_bytes(r));
         *last = Some(next);
         Ok(next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_vectors;
+
+    #[test]
+    fn monotonic_vectors() {
+        let rows = test_vectors("ulid_monotonic.txt");
+        assert!(rows.len() > 10);
+        let mut g = MonotonicGenerator::new();
+        for r in &rows {
+            if r[0] == "reset" {
+                g = MonotonicGenerator::new();
+                continue;
+            }
+            let now: u64 = r[1].parse().unwrap();
+            let mut drew = false;
+            let got = g.next_at(now, |buf| {
+                drew = true;
+                if r[2] != "-" {
+                    let rnd = u128::from_str_radix(&r[2], 16).unwrap();
+                    buf.copy_from_slice(&rnd.to_be_bytes()[6..]);
+                }
+            });
+            assert!(!(r[2] == "-" && drew), "{r:?}: drew randomness");
+            match (r[3].as_str(), got) {
+                ("error", Ok(u)) => panic!("{r:?}: got {u}, want an error"),
+                ("error", Err(_)) => {}
+                (want, got) => assert_eq!(got.map(|u| u.to_string()), Ok(want.to_string()), "{r:?}"),
+            }
+        }
     }
 }

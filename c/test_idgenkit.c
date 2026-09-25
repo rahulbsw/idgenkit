@@ -102,6 +102,117 @@ static void test_ulid_monotonic(void) {
     CHECK(uid_ulid_monotonic_next_at(&ov, 1001, &u) == UID_OK, "recovers next ms");
 }
 
+struct fixed_random {
+    uint8_t bytes[10];
+    int present, calls;
+};
+
+static int fixed_random(void *ctx, uint8_t *buf, size_t n) {
+    struct fixed_random *r = ctx;
+    r->calls++;
+    if (!r->present || n != sizeof r->bytes)
+        return UID_ERR_RANDOM;
+    memcpy(buf, r->bytes, n);
+    return UID_OK;
+}
+
+static void test_ulid_monotonic_vectors(void) {
+    FILE *f = open_vectors("ulid_monotonic.txt");
+    char line[256], hex[32], want[32];
+    unsigned long long now;
+    uid_ulid_monotonic st = {0};
+    int rows = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#')
+            continue;
+        if (strncmp(line, "reset", 5) == 0) {
+            memset(&st, 0, sizeof st);
+            continue;
+        }
+        if (sscanf(line, "next %llu %31s %31s", &now, hex, want) != 3) {
+            CHECK(0, "bad ulid_monotonic line: %s", line);
+            continue;
+        }
+        struct fixed_random r = {{0}, strcmp(hex, "-") != 0, 0};
+        if (r.present)
+            hex_decode(hex, r.bytes, sizeof r.bytes);
+        uid_ulid u;
+        int rc = uid_ulid_monotonic_next_custom_random(&st, now, fixed_random, &r, &u);
+        CHECK(r.present || r.calls == 0, "drew randomness at %llu", now);
+        if (strcmp(want, "error") == 0) {
+            CHECK(rc != UID_OK, "expected an error at %llu", now);
+        } else {
+            char enc[UID_ULID_LEN + 1] = {0};
+            uid_ulid_encode(&u, enc);
+            CHECK(rc == UID_OK && strcmp(enc, want) == 0, "at %llu got %s (rc %d) want %s", now,
+                  enc, rc, want);
+        }
+        rows++;
+    }
+    fclose(f);
+    CHECK(rows > 10, "too few ulid_monotonic vectors");
+}
+
+struct script_clock {
+    uint64_t readings[16];
+    int n, pos;
+};
+
+static uint64_t script_clock(void *ctx) {
+    struct script_clock *c = ctx;
+    uint64_t v = c->readings[c->pos];
+    if (c->pos < c->n - 1)
+        c->pos++;
+    return v;
+}
+
+static void test_snowflake_sequence_vectors(void) {
+    FILE *f = open_vectors("snowflake_sequence.txt");
+    char line[512], list[256], want[32];
+    unsigned long long epoch = 0, clock_ms;
+    unsigned machine = 0;
+    int count, rows = 0;
+    uint64_t st = 0, id, prev = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#')
+            continue;
+        if (sscanf(line, "gen %u %llu", &machine, &epoch) == 2) {
+            st = 0;
+            prev = 0;
+        } else if (sscanf(line, "fill %d %llu", &count, &clock_ms) == 2) {
+            struct script_clock c = {{clock_ms}, 1, 0};
+            for (int i = 0; i < count; i++) {
+                c.pos = 0;
+                int rc = uid_snowflake_next_clock(&st, machine, epoch, script_clock, &c, &id);
+                CHECK(rc == UID_OK && id > prev, "fill %d at %llu: rc %d id %llu", i, clock_ms, rc,
+                      (unsigned long long)id);
+                prev = id;
+            }
+        } else if (sscanf(line, "next %255s %31s", list, want) == 2) {
+            struct script_clock c = {{0}, 0, 0};
+            for (char *p = list; *p && c.n < 16; p++) {
+                c.readings[c.n++] = strtoull(p, &p, 10);
+                if (*p != ',')
+                    break;
+            }
+            int rc = uid_snowflake_next_clock(&st, machine, epoch, script_clock, &c, &id);
+            if (strcmp(want, "error") == 0) {
+                CHECK(rc != UID_OK, "expected an error at %s", list);
+            } else {
+                CHECK(rc == UID_OK && id == strtoull(want, NULL, 10), "at %s got %llu (rc %d) want %s",
+                      list, (unsigned long long)id, rc, want);
+                prev = id;
+            }
+        } else {
+            CHECK(0, "bad snowflake_sequence line: %s", line);
+            continue;
+        }
+        rows++;
+    }
+    fclose(f);
+    CHECK(rows > 10, "too few snowflake_sequence vectors");
+}
+
 static void test_snowflake_vectors(void) {
     FILE *f = open_vectors("snowflake.txt");
     char line[256];
@@ -228,7 +339,9 @@ int main(int argc, char **argv) {
     test_ulid_vectors();
     test_ulid_invalid();
     test_ulid_monotonic();
+    test_ulid_monotonic_vectors();
     test_snowflake_vectors();
+    test_snowflake_sequence_vectors();
     test_snowflake_concurrent();
     test_nanoid_vectors();
     test_nanoid_misc();

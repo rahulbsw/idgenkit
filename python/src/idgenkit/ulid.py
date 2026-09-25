@@ -15,6 +15,7 @@ import os
 import threading
 import time
 import uuid
+from typing import Callable
 
 __all__ = ["ULID", "MonotonicULID", "generate", "MAX_TIMESTAMP"]
 
@@ -153,7 +154,9 @@ class MonotonicULID:
         self._last_rand = 0
 
     def next(self) -> ULID:
-        now = _now_ms()
+        return self._next_at(_now_ms(), os.urandom)
+
+    def _next_at(self, now: int, random: Callable[[int], bytes]) -> ULID:
         with self._lock:
             if now <= self._last_ms:
                 if self._last_rand == _RANDOM_MAX:
@@ -161,8 +164,10 @@ class MonotonicULID:
                 self._last_rand += 1
                 now = self._last_ms
             else:
+                if now > MAX_TIMESTAMP:
+                    raise ValueError("timestamp must fit in 48 bits")
                 self._last_ms = now
-                self._last_rand = int.from_bytes(os.urandom(10), "big")
+                self._last_rand = int.from_bytes(random(10), "big")
             return ULID((now << _RANDOM_BITS) | self._last_rand)
 
 

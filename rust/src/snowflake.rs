@@ -65,17 +65,21 @@ impl Snowflake {
     }
 
     pub fn next_id(&self) -> Result<u64, Error> {
+        self.next_id_with(now_ms)
+    }
+
+    pub(crate) fn next_id_with(&self, mut clock: impl FnMut() -> u64) -> Result<u64, Error> {
         let seq_mask = MAX_SEQUENCE as u64;
         loop {
             let old = self.state.load(Ordering::Relaxed);
             let (last_ms, seq) = (old >> SEQUENCE_BITS, old & seq_mask);
-            let now = now_ms();
+            let now = clock();
             let (ms, next) = if now > last_ms {
                 (now, 0)
             } else if seq < seq_mask {
                 (last_ms, seq + 1)
             } else {
-                while now_ms() <= last_ms {
+                while clock() <= last_ms {
                     std::hint::spin_loop();
                 }
                 continue;
@@ -83,7 +87,7 @@ impl Snowflake {
             let delta = ms.checked_sub(self.epoch_ms).filter(|d| *d <= MAX_TIMESTAMP_DELTA).ok_or(Error::TimeRange)?;
             if self
                 .state
-                .compare_exchange_weak(old, (ms << SEQUENCE_BITS) | next, Ordering::AcqRel, Ordering::Relaxed)
+                .compare_exchange(old, (ms << SEQUENCE_BITS) | next, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
                 return Ok((delta << TIMESTAMP_SHIFT) | (self.machine_id << MACHINE_SHIFT) | next);
@@ -99,6 +103,51 @@ impl Snowflake {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_vectors;
+
+    fn scripted_clock(readings: Vec<u64>) -> impl FnMut() -> u64 {
+        let mut i = 0;
+        move || {
+            let v = readings[i];
+            i = (i + 1).min(readings.len() - 1);
+            v
+        }
+    }
+
+    #[test]
+    fn sequence_vectors() {
+        let rows = test_vectors("snowflake_sequence.txt");
+        assert!(rows.len() > 10);
+        let mut g = Snowflake::new(0, 0).unwrap();
+        let mut prev = 0;
+        for r in &rows {
+            match r[0].as_str() {
+                "gen" => {
+                    g = Snowflake::new(r[1].parse().unwrap(), r[2].parse().unwrap()).unwrap();
+                    prev = 0;
+                }
+                "fill" => {
+                    let clock: u64 = r[2].parse().unwrap();
+                    for _ in 0..r[1].parse::<u32>().unwrap() {
+                        let id = g.next_id_with(|| clock).unwrap();
+                        assert!(id > prev, "{r:?}: {id} after {prev}");
+                        prev = id;
+                    }
+                }
+                "next" => {
+                    let readings = r[1].split(',').map(|s| s.parse().unwrap()).collect();
+                    let got = g.next_id_with(scripted_clock(readings));
+                    if r[2] == "error" {
+                        assert!(got.is_err(), "{r:?}: got {got:?}, want an error");
+                    } else {
+                        prev = got.unwrap();
+                        assert_eq!(prev, r[2].parse::<u64>().unwrap(), "{r:?}");
+                    }
+                }
+                other => panic!("bad line {other}"),
+            }
+        }
+    }
 
     #[test]
     fn clock_backwards_keeps_last_millisecond() {

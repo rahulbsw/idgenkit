@@ -55,10 +55,20 @@ int uid_random_bytes(uint8_t *buf, size_t len) {
 #endif
 }
 
+static int os_random(void *ctx, uint8_t *buf, size_t len) {
+    (void)ctx;
+    return uid_random_bytes(buf, len);
+}
+
 uint64_t uid_now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+static uint64_t os_clock(void *ctx) {
+    (void)ctx;
+    return uid_now_ms();
 }
 
 static void cpu_relax(void) {
@@ -119,6 +129,11 @@ int uid_ulid_new(uid_ulid *out) {
 }
 
 int uid_ulid_monotonic_next_at(uid_ulid_monotonic *st, uint64_t now_ms, uid_ulid *out) {
+    return uid_ulid_monotonic_next_custom_random(st, now_ms, os_random, NULL, out);
+}
+
+int uid_ulid_monotonic_next_custom_random(uid_ulid_monotonic *st, uint64_t now_ms,
+                                          uid_random_fn random, void *ctx, uid_ulid *out) {
     uid_ulid next;
     int rc;
 
@@ -136,7 +151,7 @@ int uid_ulid_monotonic_next_at(uid_ulid_monotonic *st, uint64_t now_ms, uid_ulid
     if (now_ms > UID_ULID_MAX_TIME)
         return UID_ERR_RANGE;
     put_time(&next, now_ms);
-    rc = uid_random_bytes(next.b + 6, 10);
+    rc = random(ctx, next.b + 6, 10);
     if (rc != UID_OK)
         return rc;
     st->last = next;
@@ -208,12 +223,17 @@ void uid_snowflake_parse(uint64_t id, uint64_t epoch_ms, uint64_t *timestamp_ms,
 }
 
 int uid_snowflake_next(uint64_t *state, uint32_t machine_id, uint64_t epoch_ms, uint64_t *out) {
+    return uid_snowflake_next_clock(state, machine_id, epoch_ms, os_clock, NULL, out);
+}
+
+int uid_snowflake_next_clock(uint64_t *state, uint32_t machine_id, uint64_t epoch_ms,
+                             uid_clock_fn clock, void *ctx, uint64_t *out) {
     if (machine_id > UID_SNOWFLAKE_MAX_MACHINE_ID)
         return UID_ERR_RANGE;
     for (;;) {
         uint64_t old = __atomic_load_n(state, __ATOMIC_ACQUIRE);
         uint64_t last_ms = old >> SF_SEQ_BITS, seq = old & UID_SNOWFLAKE_MAX_SEQUENCE;
-        uint64_t now = uid_now_ms(), ms, next, desired;
+        uint64_t now = clock(ctx), ms, next, desired;
 
         if (now > last_ms) {
             ms = now;
@@ -223,7 +243,7 @@ int uid_snowflake_next(uint64_t *state, uint32_t machine_id, uint64_t epoch_ms, 
             ms = last_ms;
             next = seq + 1;
         } else {
-            while (uid_now_ms() <= last_ms)
+            while (clock(ctx) <= last_ms)
                 cpu_relax();
             continue;
         }
@@ -242,11 +262,6 @@ int uid_snowflake_next(uint64_t *state, uint32_t machine_id, uint64_t epoch_ms, 
 
 const char uid_nanoid_url_alphabet[] =
     "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
-
-static int os_random(void *ctx, uint8_t *buf, size_t len) {
-    (void)ctx;
-    return uid_random_bytes(buf, len);
-}
 
 int uid_nanoid_custom_random(char *out, size_t size, const char *alphabet, size_t alen,
                              uid_random_fn random, void *ctx) {

@@ -93,8 +93,63 @@ class ULIDTest(unittest.TestCase):
             t.join()
         self.assertEqual(len(set(out)), 20000)
 
+    def test_monotonic_vectors(self):
+        rows = vectors("ulid_monotonic.txt")
+        self.assertGreater(len(rows), 10)
+        gen = MonotonicULID()
+        for row in rows:
+            if row[0] == "reset":
+                gen = MonotonicULID()
+                continue
+            _, now, rnd, want = row
+            drew = []
+
+            def random(n, rnd=rnd, drew=drew):
+                drew.append(n)
+                return bytes(n) if rnd == "-" else bytes.fromhex(rnd)
+
+            if want == "error":
+                with self.assertRaises((ValueError, OverflowError), msg=row):
+                    gen._next_at(int(now), random)
+            else:
+                self.assertEqual(str(gen._next_at(int(now), random)), want, row)
+            self.assertFalse(rnd == "-" and drew, f"{row}: drew randomness")
+
+
+def scripted_clock(readings):
+    values = [int(v) for v in readings.split(",")]
+
+    def clock():
+        return values.pop(0) if len(values) > 1 else values[0]
+
+    return clock
+
 
 class SnowflakeTest(unittest.TestCase):
+    def test_sequence_vectors(self):
+        rows = vectors("snowflake_sequence.txt")
+        self.assertGreater(len(rows), 10)
+        gen, prev = None, 0
+        for row in rows:
+            op = row[0]
+            if op == "gen":
+                gen, prev = Snowflake(machine_id=int(row[1]), epoch_ms=int(row[2])), 0
+            elif op == "fill":
+                clock = int(row[2])
+                for _ in range(int(row[1])):
+                    id_ = gen._next_id(lambda: clock)
+                    self.assertGreater(id_, prev, row)
+                    prev = id_
+            elif op == "next":
+                if row[2] == "error":
+                    with self.assertRaises((ValueError, OverflowError), msg=row):
+                        gen._next_id(scripted_clock(row[1]))
+                else:
+                    prev = gen._next_id(scripted_clock(row[1]))
+                    self.assertEqual(prev, int(row[2]), row)
+            else:
+                self.fail(f"bad line {row}")
+
     def test_vectors(self):
         for epoch, mid, seq, ts, id_ in vectors("snowflake.txt"):
             epoch, mid, seq, ts, id_ = map(int, (epoch, mid, seq, ts, id_))

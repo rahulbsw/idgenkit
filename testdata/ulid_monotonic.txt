@@ -1,0 +1,26 @@
+# Monotonic ULID generator behaviour. "reset" starts a new generator.
+#   next <now_ms> <random_hex> <expected>
+# random_hex: the 10 bytes the random source returns if the call draws randomness,
+#             or "-" if the call must not draw any.
+# expected:   the canonical ULID, or "error" (the call fails and the generator is unchanged).
+reset
+next 1469918176385 d6764c61efb99302bd5b 01ARYZ6S41TSV4RRFFQ69G5FAV
+next 1469918176385 - 01ARYZ6S41TSV4RRFFQ69G5FAW
+next 1469918176380 - 01ARYZ6S41TSV4RRFFQ69G5FAX
+next 1469918176386 500d276ff8061cf122b3 01ARYZ6S42A06JEVZR0REF28NK
+reset
+next 1000 0000000000ffffffffff 00000000Z800000000ZZZZZZZZ
+next 1000 - 00000000Z80000000100000000
+next 1000 - 00000000Z80000000100000001
+reset
+next 2000 fffffffffffffffffffe 00000001YGZZZZZZZZZZZZZZZY
+next 2000 - 00000001YGZZZZZZZZZZZZZZZZ
+next 2000 - error
+next 1999 - error
+next 2001 6942ae5a1659bd1f661e 00000001YHD51AWPGPB6YHYSGY
+reset
+next 281474976710656 00000000000000000000 error
+next 281474976710655 2ebfaf8a859ffd4d6122 7ZZZZZZZZZ5TZTZ2M5KZYMTR92
+next 281474976710655 - 7ZZZZZZZZZ5TZTZ2M5KZYMTR93
+next 281474976710656 7b9af7e0f19ae7379388 error
+next 281474976710655 - 7ZZZZZZZZZ5TZTZ2M5KZYMTR94

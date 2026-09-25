@@ -85,11 +85,13 @@ func New(machineID uint16, epochMs uint64) (*Generator, error) {
 func nowMs() uint64 { return uint64(time.Now().UnixMilli()) }
 
 // Next returns a new unique ID.
-func (g *Generator) Next() (uint64, error) {
+func (g *Generator) Next() (uint64, error) { return g.next(nowMs) }
+
+func (g *Generator) next(clock func() uint64) (uint64, error) {
 	for {
 		old := g.state.Load()
 		lastMs, seq := old>>SequenceBits, old&MaxSequence
-		now := nowMs()
+		now := clock()
 		var ms, next uint64
 		switch {
 		case now > lastMs:
@@ -97,7 +99,7 @@ func (g *Generator) Next() (uint64, error) {
 		case seq < MaxSequence:
 			ms, next = lastMs, seq+1
 		default:
-			for nowMs() <= lastMs {
+			for clock() <= lastMs {
 				runtime.Gosched()
 			}
 			continue

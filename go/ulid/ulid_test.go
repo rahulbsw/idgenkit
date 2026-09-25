@@ -121,6 +121,49 @@ func TestMonotonicCarryAndOverflow(t *testing.T) {
 	}
 }
 
+func TestMonotonicVectors(t *testing.T) {
+	rows := vectors(t, "ulid_monotonic.txt")
+	m := NewMonotonic()
+	for _, r := range rows {
+		if r[0] == "reset" {
+			m = NewMonotonic()
+			continue
+		}
+		now, want := u64(t, r[1]), r[3]
+		drew := false
+		fill := func(b []byte) {
+			drew = true
+			if r[2] != "-" {
+				raw, _ := hex.DecodeString(r[2])
+				copy(b, raw)
+			}
+		}
+		u, err := m.next(now, fill)
+		if r[2] == "-" && drew {
+			t.Fatalf("%v: drew randomness", r)
+		}
+		if want == "error" {
+			if err == nil {
+				t.Fatalf("%v: got %s, want an error", r, u)
+			}
+		} else if err != nil || u.String() != want {
+			t.Fatalf("%v: got %s, %v", r, u, err)
+		}
+	}
+	if len(rows) < 10 {
+		t.Fatal("too few ulid_monotonic vectors")
+	}
+}
+
+func u64(t *testing.T, s string) uint64 {
+	t.Helper()
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
 func TestMonotonicConcurrent(t *testing.T) {
 	m := NewMonotonic()
 	var mu sync.Mutex

@@ -1,6 +1,7 @@
 package io.github.rahulbsw.idgenkit;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 /**
  * Lock-free generator of time-ordered 64-bit IDs.
@@ -48,11 +49,15 @@ public final class Snowflake {
     }
 
     public long nextId() {
+        return nextId(System::currentTimeMillis);
+    }
+
+    long nextId(LongSupplier clock) {
         while (true) {
             long old = state.get();
             long lastMs = old >>> SEQUENCE_BITS;
             long seq = old & MAX_SEQUENCE;
-            long now = System.currentTimeMillis();
+            long now = clock.getAsLong();
             long ms;
             long next;
             if (now > lastMs) {
@@ -62,7 +67,7 @@ public final class Snowflake {
                 ms = lastMs;
                 next = seq + 1;
             } else {
-                while (System.currentTimeMillis() <= lastMs) {
+                while (clock.getAsLong() <= lastMs) {
                     Thread.onSpinWait();
                 }
                 continue;
