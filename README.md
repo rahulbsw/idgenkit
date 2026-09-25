@@ -28,8 +28,8 @@ go/         Go module   github.com/rahulbsw/idgenkit/go   (ulid, snowflake, nano
 rust/       Rust crate  idgenkit                           (no dependencies)
 java/       Java 17+    io.github.rahulbsw:idgenkit        (Maven pom + plain Makefile)
 python/     Python 3.9+ package idgenkit                   (pure Python)
-postgres/   PostgreSQL extension (PGXS, tested on 14, 16, 17, 18 in Docker)
-mysql/      MySQL loadable functions (UDF), tested on MySQL 9.2
+postgres/   PostgreSQL extension (PGXS, tested on 14 to 18 in Docker, in CI)
+mysql/      MySQL loadable functions (UDF), tested on MySQL 9.2 (macOS) and 8.0 (Ubuntu, in CI)
 redis/      Redis module (self-contained module API header)
 testdata/   shared conformance vectors + generator script
 bench/      run_all.sh — runs every benchmark and writes bench/results/*.txt
