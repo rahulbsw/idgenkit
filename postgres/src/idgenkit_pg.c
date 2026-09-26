@@ -326,7 +326,7 @@ static char relid_ctx_salt[RELID_SALT_CACHE];
 static int relid_ctx_salt_len = -1;
 
 /* The HMAC context for the current secret and this salt, reused while neither changes. */
-static const uid_relid_ctx *relid_context(text *salt_text) {
+static uid_relid_ctx *relid_context(text *salt_text) {
     const char *salt = VARDATA_ANY(salt_text);
     size_t salt_len = VARSIZE_ANY_EXHDR(salt_text);
     size_t secret_len;
@@ -375,7 +375,7 @@ static text *relid_to_text(const uid_relid *id) {
 PG_FUNCTION_INFO_V1(idgenkit_relid_generate);
 Datum idgenkit_relid_generate(PG_FUNCTION_ARGS) {
     text *key = PG_GETARG_TEXT_PP(0);
-    const uid_relid_ctx *ctx = relid_context(PG_GETARG_TEXT_PP(1));
+    uid_relid_ctx *ctx = relid_context(PG_GETARG_TEXT_PP(1));
     uid_relid id;
 
     check_rc(uid_relid_new(ctx, VARDATA_ANY(key), VARSIZE_ANY_EXHDR(key), &id));
@@ -385,7 +385,7 @@ Datum idgenkit_relid_generate(PG_FUNCTION_ARGS) {
 PG_FUNCTION_INFO_V1(idgenkit_relid_generate_monotonic);
 Datum idgenkit_relid_generate_monotonic(PG_FUNCTION_ARGS) {
     text *key = PG_GETARG_TEXT_PP(0);
-    const uid_relid_ctx *ctx = relid_context(PG_GETARG_TEXT_PP(1));
+    uid_relid_ctx *ctx = relid_context(PG_GETARG_TEXT_PP(1));
     uid_relid id;
 
     check_rc(uid_relid_monotonic_next(&relid_mono, ctx, VARDATA_ANY(key), VARSIZE_ANY_EXHDR(key), &id));
@@ -395,7 +395,7 @@ Datum idgenkit_relid_generate_monotonic(PG_FUNCTION_ARGS) {
 PG_FUNCTION_INFO_V1(idgenkit_relid_tag);
 Datum idgenkit_relid_tag(PG_FUNCTION_ARGS) {
     text *key = PG_GETARG_TEXT_PP(0);
-    const uid_relid_ctx *ctx = relid_context(PG_GETARG_TEXT_PP(1));
+    uid_relid_ctx *ctx = relid_context(PG_GETARG_TEXT_PP(1));
     char buf[UID_RELID_TAG_LEN];
 
     uid_relid_tag_encode(uid_relid_tag(ctx, VARDATA_ANY(key), VARSIZE_ANY_EXHDR(key)), buf);

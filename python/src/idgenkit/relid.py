@@ -60,6 +60,21 @@ def _text(tag: int, ms: int, r: int) -> str:
     )
 
 
+# (ms, its text + "-"): consecutive IDs usually share a millisecond.
+_ms_text = (-1, "")
+
+
+def _suffix(ms: int, r: int) -> str:
+    global _ms_text
+    p = _PAIRS
+    cached = _ms_text
+    if cached[0] != ms:
+        cached = _ms_text = (
+            ms, f"{p[ms >> 40]}{p[ms >> 30 & 1023]}{p[ms >> 20 & 1023]}{p[ms >> 10 & 1023]}{p[ms & 1023]}-"
+        )
+    return f"{cached[1]}{p[r >> 40]}{p[r >> 30 & 1023]}{p[r >> 20 & 1023]}{p[r >> 10 & 1023]}{p[r & 1023]}"
+
+
 def _tag_text(tag: int) -> str:
     return _PAIRS[tag >> 20] + _PAIRS[tag >> 10 & 1023] + _PAIRS[tag & 1023]
 
@@ -110,6 +125,12 @@ def _now_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
+# Keys up to _CACHE_MAX_KEY characters have their tag cached; the cache is
+# emptied when it reaches _CACHE_SIZE keys.
+_CACHE_SIZE = 1024
+_CACHE_MAX_KEY = 64
+
+
 class RelativeId:
     """Generates relative IDs for one secret and salt. Thread-safe.
 
@@ -119,7 +140,7 @@ class RelativeId:
     exhausted within a single millisecond.
     """
 
-    __slots__ = ("_mac", "_lock", "_last_ms", "_last_rand")
+    __slots__ = ("_mac", "_lock", "_last_ms", "_last_rand", "_cache")
 
     def __init__(self, secret: bytes, salt: str = "") -> None:
         if not isinstance(secret, (bytes, bytearray)) or len(secret) < MIN_SECRET_BYTES:
@@ -131,28 +152,49 @@ class RelativeId:
         self._lock = threading.Lock()
         self._last_ms = -1
         self._last_rand = 0
+        self._cache: dict[str, tuple[int, str]] = {}
 
-    def tag_value(self, key: str) -> int:
+    def _compute_tag(self, key: str) -> int:
         mac = self._mac.copy()
         mac.update(key.encode("utf-8"))
         return int.from_bytes(mac.digest()[:4], "big") >> 2
 
+    def _tag_entry(self, key: str) -> tuple[int, str]:
+        """(tag, tag text + "-") for key."""
+        entry = self._cache.get(key)
+        if entry is None:
+            tag = self._compute_tag(key)
+            entry = (tag, _tag_text(tag) + "-")
+            if len(key) <= _CACHE_MAX_KEY:
+                if len(self._cache) >= _CACHE_SIZE:
+                    self._cache.clear()
+                self._cache[key] = entry
+        return entry
+
+    def tag_value(self, key: str) -> int:
+        return self._tag_entry(key)[0]
+
     def tag(self, key: str) -> str:
         """The 6-character tag that starts every ID for ``key``."""
-        return _tag_text(self.tag_value(key))
+        return self._tag_entry(key)[1][:6]
 
     def generate(self, key: str) -> str:
         now = _now_ms()
         if now > MAX_TIMESTAMP:
             raise ValueError("timestamp must fit in 48 bits")
-        return _text(self.tag_value(key), now, int.from_bytes(os.urandom(7), "big") & MAX_RANDOM)
+        prefix = (self._cache.get(key) or self._tag_entry(key))[1]
+        return prefix + _suffix(now, int.from_bytes(os.urandom(7), "big") & MAX_RANDOM)
 
     def monotonic(self, key: str) -> str:
-        return self._monotonic_at(self.tag_value(key), _now_ms(), os.urandom)
+        prefix = (self._cache.get(key) or self._tag_entry(key))[1]
+        return self._monotonic_text(prefix, _now_ms(), os.urandom)
 
     def _monotonic_at(self, tag: int, now: int, random: Callable[[int], bytes]) -> str:
         if not 0 <= tag <= MAX_TAG:
             raise ValueError("tag must fit in 30 bits")
+        return self._monotonic_text(_tag_text(tag) + "-", now, random)
+
+    def _monotonic_text(self, prefix: str, now: int, random: Callable[[int], bytes]) -> str:
         with self._lock:
             if now <= self._last_ms:
                 if self._last_rand == MAX_RANDOM:
@@ -163,4 +205,4 @@ class RelativeId:
                     raise ValueError("timestamp must fit in 48 bits")
                 self._last_ms = now
                 self._last_rand = int.from_bytes(random(7), "big") & MAX_RANDOM
-            return _text(tag, self._last_ms, self._last_rand)
+            return prefix + _suffix(self._last_ms, self._last_rand)

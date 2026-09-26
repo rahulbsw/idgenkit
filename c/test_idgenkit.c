@@ -654,6 +654,42 @@ static void test_relid_generate(void) {
     uid_relid_ctx_wipe(&ctx);
 }
 
+static uint32_t reference_tag(const char *secret, const char *salt, const char *key, size_t key_len) {
+    uint8_t msg[128], mac[32];
+    size_t salt_len = strlen(salt);
+    msg[0] = msg[1] = msg[2] = 0;
+    msg[3] = (uint8_t)salt_len;
+    memcpy(msg + 4, salt, salt_len);
+    memcpy(msg + 4 + salt_len, key, key_len);
+    uid_hmac_sha256((const uint8_t *)secret, strlen(secret), msg, 4 + salt_len + key_len, mac);
+    return ((uint32_t)mac[0] << 24 | (uint32_t)mac[1] << 16 | (uint32_t)mac[2] << 8 | mac[3]) >> 2;
+}
+
+static void test_relid_tag_cache(void) {
+    static const char secret[] = "test-only-secret-0123456789";
+    static const char *salts[] = {"orders", "invoices"};
+    char key[UID_RELID_CACHE_KEY + 2];
+    uid_relid_ctx ctx;
+    for (int s = 0; s < 2; s++) {
+        CHECK(uid_relid_ctx_init(&ctx, (const uint8_t *)secret, sizeof secret - 1, salts[s],
+                                 strlen(salts[s])) == UID_OK,
+              "init");
+        for (int round = 0; round < 2; round++) {
+            for (int i = 0; i < 4 * UID_RELID_CACHE_SLOTS; i++) {
+                size_t len = (size_t)snprintf(key, sizeof key, "customer-%d", i);
+                CHECK(uid_relid_tag(&ctx, key, len) == reference_tag(secret, salts[s], key, len),
+                      "cached tag");
+            }
+            for (size_t len = 0; len <= UID_RELID_CACHE_KEY + 1; len++) {
+                memset(key, 'k', len);
+                CHECK(uid_relid_tag(&ctx, key, len) == reference_tag(secret, salts[s], key, len),
+                      "cached tag by length");
+            }
+        }
+    }
+    uid_relid_ctx_wipe(&ctx);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1)
         testdata = argv[1];
@@ -671,6 +707,7 @@ int main(int argc, char **argv) {
     test_relid_invalid();
     test_relid_monotonic_vectors();
     test_relid_generate();
+    test_relid_tag_cache();
     test_snowflake_vectors();
     test_snowflake_sequence_vectors();
     test_snowflake_concurrent();

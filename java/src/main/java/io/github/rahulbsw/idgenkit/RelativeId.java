@@ -3,6 +3,7 @@ package io.github.rahulbsw.idgenkit;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Consumer;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -73,7 +74,14 @@ public final class RelativeId {
         }
     }
 
+    // Tags of recently used keys up to CACHE_MAX_KEY chars, in a direct-mapped table.
+    static final int CACHE_SLOTS = 256;
+    static final int CACHE_MAX_KEY = 64;
+
+    private record CachedTag(String key, int tag) {}
+
     private final Mac prototype;
+    private final AtomicReferenceArray<CachedTag> cache = new AtomicReferenceArray<>(CACHE_SLOTS);
     private long lastMs = -1;
     private long lastRand;
 
@@ -102,6 +110,21 @@ public final class RelativeId {
 
     /** The 30-bit tag for {@code key}. */
     public int tagValue(String key) {
+        if (key.length() > CACHE_MAX_KEY) {
+            return computeTag(key);
+        }
+        int h = key.hashCode();
+        int slot = (h ^ h >>> 16) & (CACHE_SLOTS - 1);
+        CachedTag c = cache.get(slot);
+        if (c != null && c.key.equals(key)) {
+            return c.tag;
+        }
+        int tag = computeTag(key);
+        cache.set(slot, new CachedTag(key, tag));
+        return tag;
+    }
+
+    int computeTag(String key) {
         Mac mac;
         try {
             mac = (Mac) prototype.clone();

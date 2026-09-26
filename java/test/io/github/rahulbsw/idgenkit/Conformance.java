@@ -38,6 +38,7 @@ public final class Conformance {
         run("relidMonotonicVectors", Conformance::relidMonotonicVectors);
         run("relidGenerate", Conformance::relidGenerate);
         run("relidMonotonic", Conformance::relidMonotonic);
+        run("relidTagCache", Conformance::relidTagCache);
         run("snowflakeVectors", Conformance::snowflakeVectors);
         run("snowflakeSequenceVectors", Conformance::snowflakeSequenceVectors);
         run("snowflakeValidation", Conformance::snowflakeValidation);
@@ -366,6 +367,33 @@ public final class Conformance {
             t.join();
         }
         check(all.size() == 40_000, "concurrent duplicates: " + all.size());
+    }
+
+    static void relidTagCache() throws InterruptedException {
+        RelativeId g = new RelativeId(TEST_SECRET, "orders");
+        List<String> keys = new ArrayList<>(List.of("", "k".repeat(RelativeId.CACHE_MAX_KEY),
+                "k".repeat(RelativeId.CACHE_MAX_KEY + 1), "Aa", "BB")); // "Aa" and "BB" share a hashCode
+        for (int i = 0; i < 4 * RelativeId.CACHE_SLOTS; i++) {
+            keys.add("customer-" + i);
+        }
+        Set<String> bad = ConcurrentHashMap.newKeySet();
+        Thread[] ts = new Thread[4];
+        for (int t = 0; t < ts.length; t++) {
+            ts[t] = new Thread(() -> {
+                for (int round = 0; round < 3; round++) {
+                    for (String k : keys) {
+                        if (g.tagValue(k) != g.computeTag(k)) {
+                            bad.add(k);
+                        }
+                    }
+                }
+            });
+            ts[t].start();
+        }
+        for (Thread t : ts) {
+            t.join();
+        }
+        check(bad.isEmpty(), "stale cached tags for " + bad);
     }
 
     static LongSupplier scriptedClock(String readings) {

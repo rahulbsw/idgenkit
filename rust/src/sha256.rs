@@ -24,6 +24,109 @@ pub(crate) struct Sha256 {
     used: usize,
 }
 
+/// Compresses whole 64-byte blocks, with the CPU's SHA-256 instructions when present.
+fn blocks(h: &mut [u32; 8], p: &[u8]) {
+    debug_assert!(p.len() % 64 == 0);
+    #[cfg(target_arch = "aarch64")]
+    if std::arch::is_aarch64_feature_detected!("sha2") {
+        // SAFETY: the sha2 feature was detected at runtime.
+        return unsafe { hw::blocks(h, p) };
+    }
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("sha") && std::arch::is_x86_feature_detected!("sse4.1") {
+        // SAFETY: the sha and sse4.1 features were detected at runtime.
+        return unsafe { hw::blocks(h, p) };
+    }
+    for c in p.chunks_exact(64) {
+        block(h, c);
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+mod hw {
+    use super::K;
+    use std::arch::aarch64::*;
+
+    #[target_feature(enable = "sha2")]
+    pub(super) unsafe fn blocks(h: &mut [u32; 8], p: &[u8]) {
+        let mut s0 = vld1q_u32(h.as_ptr());
+        let mut s1 = vld1q_u32(h.as_ptr().add(4));
+        for c in p.chunks_exact(64) {
+            let (mut abcd, mut efgh) = (s0, s1);
+            let mut m = [0u32; 4].map(|_| vdupq_n_u32(0));
+            for (i, w) in m.iter_mut().enumerate() {
+                *w = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(c.as_ptr().add(16 * i))));
+            }
+            for g in 0..16 {
+                let k = vaddq_u32(m[g & 3], vld1q_u32(K.as_ptr().add(4 * g)));
+                let prev = abcd;
+                abcd = vsha256hq_u32(abcd, efgh, k);
+                efgh = vsha256h2q_u32(efgh, prev, k);
+                if g < 12 {
+                    m[g & 3] = vsha256su1q_u32(
+                        vsha256su0q_u32(m[g & 3], m[(g + 1) & 3]),
+                        m[(g + 2) & 3],
+                        m[(g + 3) & 3],
+                    );
+                }
+            }
+            s0 = vaddq_u32(s0, abcd);
+            s1 = vaddq_u32(s1, efgh);
+        }
+        vst1q_u32(h.as_mut_ptr(), s0);
+        vst1q_u32(h.as_mut_ptr().add(4), s1);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+mod hw {
+    use super::K;
+    use std::arch::x86_64::*;
+
+    #[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
+    pub(super) unsafe fn blocks(h: &mut [u32; 8], p: &[u8]) {
+        let bswap = _mm_set_epi64x(0x0c0d0e0f08090a0b, 0x0405060700010203);
+        let t = _mm_shuffle_epi32(_mm_loadu_si128(h.as_ptr() as *const __m128i), 0xB1);
+        let mut s1 = _mm_shuffle_epi32(_mm_loadu_si128(h.as_ptr().add(4) as *const __m128i), 0x1B);
+        let mut s0 = _mm_alignr_epi8(t, s1, 8); // ABEF
+        s1 = _mm_blend_epi16(s1, t, 0xF0); // CDGH
+        for c in p.chunks_exact(64) {
+            let (abef, cdgh) = (s0, s1);
+            let mut m = [_mm_setzero_si128(); 4];
+            for (i, w) in m.iter_mut().enumerate() {
+                *w = _mm_shuffle_epi8(
+                    _mm_loadu_si128(c.as_ptr().add(16 * i) as *const __m128i),
+                    bswap,
+                );
+            }
+            for g in 0..16 {
+                let k = _mm_add_epi32(
+                    m[g & 3],
+                    _mm_loadu_si128(K.as_ptr().add(4 * g) as *const __m128i),
+                );
+                s1 = _mm_sha256rnds2_epu32(s1, s0, k);
+                s0 = _mm_sha256rnds2_epu32(s0, s1, _mm_shuffle_epi32(k, 0x0E));
+                if g < 12 {
+                    let w = _mm_add_epi32(
+                        _mm_sha256msg1_epu32(m[g & 3], m[(g + 1) & 3]),
+                        _mm_alignr_epi8(m[(g + 3) & 3], m[(g + 2) & 3], 4),
+                    );
+                    m[g & 3] = _mm_sha256msg2_epu32(w, m[(g + 3) & 3]);
+                }
+            }
+            s0 = _mm_add_epi32(s0, abef);
+            s1 = _mm_add_epi32(s1, cdgh);
+        }
+        let t = _mm_shuffle_epi32(s0, 0x1B); // FEBA
+        s1 = _mm_shuffle_epi32(s1, 0xB1); // DCHG
+        _mm_storeu_si128(h.as_mut_ptr() as *mut __m128i, _mm_blend_epi16(t, s1, 0xF0));
+        _mm_storeu_si128(
+            h.as_mut_ptr().add(4) as *mut __m128i,
+            _mm_alignr_epi8(s1, t, 8),
+        );
+    }
+}
+
 fn block(h: &mut [u32; 8], p: &[u8]) {
     let mut w = [0u32; 64];
     for (i, c) in p.chunks_exact(4).enumerate() {
@@ -82,14 +185,12 @@ impl Sha256 {
                 return;
             }
             let buf = self.buf;
-            block(&mut self.h, &buf);
+            blocks(&mut self.h, &buf);
             self.used = 0;
         }
-        let mut chunks = p.chunks_exact(64);
-        for c in &mut chunks {
-            block(&mut self.h, c);
-        }
-        let rest = chunks.remainder();
+        let whole = p.len() - p.len() % 64;
+        blocks(&mut self.h, &p[..whole]);
+        let rest = &p[whole..];
         self.buf[..rest.len()].copy_from_slice(rest);
         self.used = rest.len();
     }
@@ -148,6 +249,36 @@ impl Hmac {
 
     /// Finishes a copy of the prepared state with `msg`; `self` stays reusable.
     pub(crate) fn mac(&self, msg: &[u8]) -> [u8; 32] {
+        let used = self.inner.used;
+        if used + msg.len() <= 55 && self.outer.used == 0 {
+            // The inner and outer messages each end within one block.
+            let mut block = [0u8; 64];
+            block[..used].copy_from_slice(&self.inner.buf[..used]);
+            block[used..used + msg.len()].copy_from_slice(msg);
+            block[used + msg.len()] = 0x80;
+            let bits = self
+                .inner
+                .total
+                .wrapping_add(msg.len() as u64)
+                .wrapping_mul(8);
+            block[56..].copy_from_slice(&bits.to_be_bytes());
+            let mut h = self.inner.h;
+            blocks(&mut h, &block);
+            for (o, v) in block.chunks_exact_mut(4).zip(h) {
+                o.copy_from_slice(&v.to_be_bytes());
+            }
+            block[32..].fill(0);
+            block[32] = 0x80;
+            let bits = self.outer.total.wrapping_add(32).wrapping_mul(8);
+            block[56..].copy_from_slice(&bits.to_be_bytes());
+            let mut h = self.outer.h;
+            blocks(&mut h, &block);
+            let mut out = [0u8; 32];
+            for (o, v) in out.chunks_exact_mut(4).zip(h) {
+                o.copy_from_slice(&v.to_be_bytes());
+            }
+            return out;
+        }
         let mut inner = self.inner.clone();
         inner.update(msg);
         let mut outer = self.outer.clone();

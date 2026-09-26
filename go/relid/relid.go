@@ -16,7 +16,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash"
+	"hash/maphash"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,6 +35,11 @@ const (
 	MaxRandom     = 1<<50 - 1
 
 	alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+	// Tags of recently used keys up to cacheMaxKey bytes are cached in a
+	// direct-mapped table of cacheSlots entries.
+	cacheSlots  = 256
+	cacheMaxKey = 64
 )
 
 var (
@@ -133,6 +141,8 @@ func Parse(s string) (Parts, error) {
 type Generator struct {
 	macs   sync.Pool
 	prefix []byte
+	seed   maphash.Seed
+	cache  [cacheSlots]atomic.Pointer[cachedTag]
 
 	mu       sync.Mutex
 	lastMs   uint64
@@ -151,13 +161,31 @@ func New(secret []byte, salt string) (*Generator, error) {
 	}
 	key := append([]byte(nil), secret...)
 	prefix := binary.BigEndian.AppendUint32(nil, uint32(len(salt)))
-	g := &Generator{prefix: append(prefix, salt...)}
+	g := &Generator{prefix: append(prefix, salt...), seed: maphash.MakeSeed()}
 	g.macs.New = func() any { return hmac.New(sha256.New, key) }
 	return g, nil
 }
 
+type cachedTag struct {
+	key string
+	tag uint32
+}
+
 // TagValue returns the 30-bit tag for key.
 func (g *Generator) TagValue(key string) uint32 {
+	if len(key) > cacheMaxKey {
+		return g.computeTag(key)
+	}
+	slot := &g.cache[maphash.String(g.seed, key)%cacheSlots]
+	if c := slot.Load(); c != nil && c.key == key {
+		return c.tag
+	}
+	tag := g.computeTag(key)
+	slot.Store(&cachedTag{strings.Clone(key), tag})
+	return tag
+}
+
+func (g *Generator) computeTag(key string) uint32 {
 	mac := g.macs.Get().(hash.Hash)
 	mac.Reset()
 	mac.Write(g.prefix)

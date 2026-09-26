@@ -304,6 +304,19 @@ class RelativeIdTest(unittest.TestCase):
             t.join()
         self.assertEqual(len(set(seen)), 40000)
 
+    def test_tag_cache(self):
+        gen = RelativeId(TEST_SECRET, "orders")
+        keys = ["", "k" * relid._CACHE_MAX_KEY, "k" * (relid._CACHE_MAX_KEY + 1)]
+        keys += [f"customer-{i}" for i in range(3 * relid._CACHE_SIZE)]
+        for _ in range(2):
+            for key in keys:
+                tag = gen._compute_tag(key)
+                self.assertEqual(gen.tag_value(key), tag, key)
+                self.assertEqual(gen.tag(key), relid.encode_tag(tag), key)
+                self.assertTrue(gen.generate(key).startswith(relid.encode_tag(tag) + "-"), key)
+        self.assertLessEqual(len(gen._cache), relid._CACHE_SIZE)
+        self.assertNotIn(keys[2], gen._cache)
+
 
 class SnowflakeTest(unittest.TestCase):
     def test_sequence_vectors(self):

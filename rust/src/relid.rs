@@ -146,6 +146,18 @@ fn random50(fill: impl FnOnce(&mut [u8])) -> u64 {
 pub struct RelativeId {
     mac: Hmac,
     state: Mutex<(u64, u64, bool)>,
+    cache: Box<[Mutex<CachedTag>]>,
+}
+
+// Tags of recent keys up to CACHE_MAX_KEY bytes, in a direct-mapped table.
+const CACHE_SLOTS: usize = 64;
+const CACHE_MAX_KEY: usize = 32;
+
+#[derive(Clone, Copy, Default)]
+struct CachedTag {
+    len: u8, // key length + 1; 0 for an empty slot
+    key: [u8; CACHE_MAX_KEY],
+    tag: u32,
 }
 
 impl RelativeId {
@@ -162,13 +174,36 @@ impl RelativeId {
         Ok(RelativeId {
             mac,
             state: Mutex::new((0, 0, false)),
+            cache: (0..CACHE_SLOTS).map(|_| Mutex::default()).collect(),
         })
+    }
+
+    fn compute_tag(&self, key: &[u8]) -> u32 {
+        let m = self.mac.mac(key);
+        u32::from_be_bytes([m[0], m[1], m[2], m[3]]) >> 2
     }
 
     /// The 30-bit tag for `key`.
     pub fn tag_value(&self, key: &str) -> u32 {
-        let m = self.mac.mac(key.as_bytes());
-        u32::from_be_bytes([m[0], m[1], m[2], m[3]]) >> 2
+        let key = key.as_bytes();
+        if key.len() > CACHE_MAX_KEY {
+            return self.compute_tag(key);
+        }
+        let hash = key
+            .iter()
+            .fold(2166136261u32, |h, &b| (h ^ b as u32).wrapping_mul(16777619)); // FNV-1a
+                                                                                 // A slot busy in another thread is skipped rather than waited for.
+        let Ok(mut slot) = self.cache[hash as usize % CACHE_SLOTS].try_lock() else {
+            return self.compute_tag(key);
+        };
+        if slot.len as usize == key.len() + 1 && &slot.key[..key.len()] == key {
+            return slot.tag;
+        }
+        let tag = self.compute_tag(key);
+        slot.key[..key.len()].copy_from_slice(key);
+        slot.len = key.len() as u8 + 1;
+        slot.tag = tag;
+        tag
     }
 
     /// The 6-character tag that starts every ID for `key`.
@@ -226,7 +261,7 @@ impl fmt::Debug for RelativeId {
 
 #[cfg(test)]
 mod tests {
-    use super::RelativeId;
+    use super::{RelativeId, CACHE_MAX_KEY, CACHE_SLOTS};
 
     fn unhex(s: &str) -> Vec<u8> {
         (0..s.len())
@@ -260,5 +295,23 @@ mod tests {
             }
             assert!(!(r[3] == "-" && drew), "{r:?}: drew randomness");
         }
+    }
+
+    #[test]
+    fn tag_cache() {
+        let gen = RelativeId::new(b"test-only-secret-0123456789", "orders").unwrap();
+        let mut keys: Vec<String> = (0..=CACHE_MAX_KEY + 1).map(|n| "k".repeat(n)).collect();
+        keys.extend((0..4 * CACHE_SLOTS).map(|i| format!("customer-{i}")));
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                s.spawn(|| {
+                    for _ in 0..3 {
+                        for k in &keys {
+                            assert_eq!(gen.tag_value(k), gen.compute_tag(k.as_bytes()), "{k}");
+                        }
+                    }
+                });
+            }
+        });
     }
 }

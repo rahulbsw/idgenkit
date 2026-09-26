@@ -274,7 +274,7 @@ static void relid_deinit(UDF_INIT *initid) {
 }
 
 /* The context for this row's salt (argument 2, default ''), or NULL on error. */
-static const uid_relid_ctx *relid_context(UDF_INIT *initid, UDF_ARGS *args) {
+static uid_relid_ctx *relid_context(UDF_INIT *initid, UDF_ARGS *args) {
     struct relid_state *st = (struct relid_state *)initid->ptr;
     const char *salt = "", *secret = getenv(RELID_SECRET_ENV);
     size_t salt_len = 0;
@@ -301,7 +301,7 @@ static __thread uid_relid_monotonic relid_mono;
 
 static char *relid_result(UDF_INIT *initid, UDF_ARGS *args, bool monotonic, char *result,
                           unsigned long *length, unsigned char *is_null, unsigned char *error) {
-    const uid_relid_ctx *ctx;
+    uid_relid_ctx *ctx;
     uid_relid id;
     int rc;
 
@@ -362,7 +362,7 @@ void relid_tag_deinit(UDF_INIT *initid) {
 
 char *relid_tag(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length,
                 unsigned char *is_null, unsigned char *error) {
-    const uid_relid_ctx *ctx;
+    uid_relid_ctx *ctx;
     if (args->args[0] == NULL) {
         *is_null = 1;
         return NULL;

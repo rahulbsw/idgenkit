@@ -147,7 +147,7 @@ static int relid_salt_len = -1;
 static uid_relid_monotonic relid_mono;
 
 /* Replies with an error and returns NULL if relative IDs are not configured. */
-static const uid_relid_ctx *relid_context(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+static uid_relid_ctx *relid_context(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     size_t salt_len = 0;
     const char *salt = argc == 3 ? RedisModule_StringPtrLen(argv[2], &salt_len) : "";
     if (relid_secret == NULL) {
@@ -170,7 +170,7 @@ static const uid_relid_ctx *relid_context(RedisModuleCtx *ctx, RedisModuleString
 static int relid_reply(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, int monotonic) {
     if (argc != 2 && argc != 3)
         return RedisModule_WrongArity(ctx);
-    const uid_relid_ctx *rctx = relid_context(ctx, argv, argc);
+    uid_relid_ctx *rctx = relid_context(ctx, argv, argc);
     if (rctx == NULL)
         return REDISMODULE_OK;
     size_t len;
@@ -196,7 +196,7 @@ static int RelidMonotonic(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
 static int RelidTag(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     if (argc != 2 && argc != 3)
         return RedisModule_WrongArity(ctx);
-    const uid_relid_ctx *rctx = relid_context(ctx, argv, argc);
+    uid_relid_ctx *rctx = relid_context(ctx, argv, argc);
     if (rctx == NULL)
         return REDISMODULE_OK;
     size_t len;

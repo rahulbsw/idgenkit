@@ -123,10 +123,22 @@ typedef struct {
     size_t used;
 } uid_sha256;
 
+#define UID_RELID_CACHE_SLOTS 64
+#define UID_RELID_CACHE_KEY 32
+
+typedef struct {
+    uint32_t tag;
+    uint8_t len; /* key length + 1; 0 for an empty slot */
+    char key[UID_RELID_CACHE_KEY];
+} uid_relid_cache_entry;
+
 /* HMAC-SHA-256 keyed with the secret, with BE32(len(salt)) || salt already
- * absorbed. Holds secret-equivalent material: wipe it when done. */
+ * absorbed, plus the tags of recent keys up to UID_RELID_CACHE_KEY bytes.
+ * Not thread-safe: use one per thread. Holds secret-equivalent material:
+ * wipe it when done. */
 typedef struct {
     uid_sha256 inner, outer;
+    uid_relid_cache_entry cache[UID_RELID_CACHE_SLOTS];
 } uid_relid_ctx;
 
 /* Caller-owned monotonic state shared by every key; zero-initialise before
@@ -144,10 +156,10 @@ void uid_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg, siz
 int uid_relid_ctx_init(uid_relid_ctx *ctx, const uint8_t *secret, size_t secret_len,
                        const char *salt, size_t salt_len);
 void uid_relid_ctx_wipe(uid_relid_ctx *ctx);
-uint32_t uid_relid_tag(const uid_relid_ctx *ctx, const char *key, size_t key_len);
-int uid_relid_new(const uid_relid_ctx *ctx, const char *key, size_t key_len, uid_relid *out);
+uint32_t uid_relid_tag(uid_relid_ctx *ctx, const char *key, size_t key_len);
+int uid_relid_new(uid_relid_ctx *ctx, const char *key, size_t key_len, uid_relid *out);
 int uid_relid_from_parts(uid_relid *out, uint32_t tag, uint64_t timestamp_ms, uint64_t random);
-int uid_relid_monotonic_next(uid_relid_monotonic *state, const uid_relid_ctx *ctx, const char *key,
+int uid_relid_monotonic_next(uid_relid_monotonic *state, uid_relid_ctx *ctx, const char *key,
                              size_t key_len, uid_relid *out);
 int uid_relid_monotonic_next_custom_random(uid_relid_monotonic *state, uint32_t tag,
                                            uint64_t now_ms, uid_random_fn random, void *rctx,

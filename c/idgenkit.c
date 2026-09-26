@@ -19,6 +19,27 @@
 #error "idgenkit: unsupported platform (need arc4random_buf or getrandom)"
 #endif
 
+/* SHA-256 instructions: ARMv8 SHA2 or x86 SHA-NI, checked at load time where
+ * they are optional. Define UID_PORTABLE_SHA256 to use only the C version. */
+#if defined(UID_PORTABLE_SHA256)
+#elif defined(__aarch64__) && defined(__ARM_FEATURE_SHA2)
+#include <arm_neon.h>
+#define UID_SHA_ARM 1
+#define UID_SHA_TARGET
+#elif defined(__aarch64__) && defined(__linux__) && defined(__GNUC__) && !defined(__clang__)
+#include <arm_neon.h>
+#include <sys/auxv.h>
+#define UID_SHA_ARM 1
+#define UID_SHA_DETECT 1
+#define UID_SHA_TARGET __attribute__((target("+crypto")))
+#elif defined(__x86_64__) && defined(__GNUC__)
+#include <cpuid.h>
+#include <immintrin.h>
+#define UID_SHA_X86 1
+#define UID_SHA_DETECT 1
+#define UID_SHA_TARGET __attribute__((target("sha,sse4.1")))
+#endif
+
 const char *uid_strerror(int err) {
     switch (err) {
     case UID_OK:
@@ -369,7 +390,7 @@ static const uint32_t SHA256_K[64] = {
 
 #define ROTR32(x, n) ((x) >> (n) | (x) << (32 - (n)))
 
-static void sha256_block(uint32_t h[8], const uint8_t p[64]) {
+static void sha256_block_portable(uint32_t h[8], const uint8_t p[64]) {
     uint32_t w[64], a, b, c, d, e, f, g, hh;
     for (int i = 0; i < 16; i++)
         w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 |
@@ -387,6 +408,85 @@ static void sha256_block(uint32_t h[8], const uint8_t p[64]) {
         hh = g, g = f, f = e, e = d + t1, d = c, c = b, b = a, a = t1 + t2;
     }
     h[0] += a, h[1] += b, h[2] += c, h[3] += d, h[4] += e, h[5] += f, h[6] += g, h[7] += hh;
+}
+
+#if defined(UID_SHA_ARM)
+UID_SHA_TARGET static void sha256_blocks_hw(uint32_t h[8], const uint8_t *p, size_t blocks) {
+    uint32x4_t s0 = vld1q_u32(h), s1 = vld1q_u32(h + 4);
+    for (; blocks > 0; blocks--, p += 64) {
+        uint32x4_t abcd = s0, efgh = s1, m[4];
+        for (int i = 0; i < 4; i++)
+            m[i] = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p + 16 * i)));
+        for (int g = 0; g < 16; g++) {
+            uint32x4_t k = vaddq_u32(m[g & 3], vld1q_u32(SHA256_K + 4 * g)), prev = abcd;
+            abcd = vsha256hq_u32(abcd, efgh, k);
+            efgh = vsha256h2q_u32(efgh, prev, k);
+            if (g < 12)
+                m[g & 3] = vsha256su1q_u32(vsha256su0q_u32(m[g & 3], m[(g + 1) & 3]),
+                                           m[(g + 2) & 3], m[(g + 3) & 3]);
+        }
+        s0 = vaddq_u32(s0, abcd);
+        s1 = vaddq_u32(s1, efgh);
+    }
+    vst1q_u32(h, s0);
+    vst1q_u32(h + 4, s1);
+}
+#elif defined(UID_SHA_X86)
+UID_SHA_TARGET static void sha256_blocks_hw(uint32_t h[8], const uint8_t *p, size_t blocks) {
+    const __m128i bswap = _mm_set_epi64x(0x0c0d0e0f08090a0bLL, 0x0405060700010203LL);
+    __m128i t = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)h), 0xB1);
+    __m128i s1 = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)(h + 4)), 0x1B);
+    __m128i s0 = _mm_alignr_epi8(t, s1, 8); /* ABEF */
+    s1 = _mm_blend_epi16(s1, t, 0xF0);      /* CDGH */
+    for (; blocks > 0; blocks--, p += 64) {
+        __m128i abef = s0, cdgh = s1, m[4];
+        for (int i = 0; i < 4; i++)
+            m[i] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)(p + 16 * i)), bswap);
+        for (int g = 0; g < 16; g++) {
+            __m128i k = _mm_add_epi32(m[g & 3], _mm_loadu_si128((const __m128i *)(SHA256_K + 4 * g)));
+            s1 = _mm_sha256rnds2_epu32(s1, s0, k);
+            s0 = _mm_sha256rnds2_epu32(s0, s1, _mm_shuffle_epi32(k, 0x0E));
+            if (g < 12) {
+                __m128i w = _mm_add_epi32(_mm_sha256msg1_epu32(m[g & 3], m[(g + 1) & 3]),
+                                          _mm_alignr_epi8(m[(g + 3) & 3], m[(g + 2) & 3], 4));
+                m[g & 3] = _mm_sha256msg2_epu32(w, m[(g + 3) & 3]);
+            }
+        }
+        s0 = _mm_add_epi32(s0, abef);
+        s1 = _mm_add_epi32(s1, cdgh);
+    }
+    t = _mm_shuffle_epi32(s0, 0x1B);  /* FEBA */
+    s1 = _mm_shuffle_epi32(s1, 0xB1); /* DCHG */
+    _mm_storeu_si128((__m128i *)h, _mm_blend_epi16(t, s1, 0xF0));
+    _mm_storeu_si128((__m128i *)(h + 4), _mm_alignr_epi8(s1, t, 8));
+}
+#endif
+
+#if defined(UID_SHA_DETECT)
+static int sha256_hw;
+
+__attribute__((constructor)) static void sha256_detect(void) {
+#if defined(UID_SHA_ARM)
+    sha256_hw = (getauxval(AT_HWCAP) & (1UL << 6)) != 0; /* HWCAP_SHA2 */
+#else
+    unsigned a, b, c, d;
+    sha256_hw = __get_cpuid(1, &a, &b, &c, &d) && (c & bit_SSE4_1) &&
+                __get_cpuid_count(7, 0, &a, &b, &c, &d) && (b & bit_SHA);
+#endif
+}
+#elif defined(UID_SHA_ARM)
+#define sha256_hw 1
+#endif
+
+static void sha256_blocks(uint32_t h[8], const uint8_t *p, size_t blocks) {
+#if defined(UID_SHA_ARM) || defined(UID_SHA_X86)
+    if (sha256_hw) {
+        sha256_blocks_hw(h, p, blocks);
+        return;
+    }
+#endif
+    for (; blocks > 0; blocks--, p += 64)
+        sha256_block_portable(h, p);
 }
 
 static void sha256_init(uid_sha256 *s) {
@@ -407,11 +507,12 @@ static void sha256_update(uid_sha256 *s, const uint8_t *p, size_t n) {
         n -= take;
         if (s->used < 64)
             return;
-        sha256_block(s->h, s->buf);
+        sha256_blocks(s->h, s->buf, 1);
         s->used = 0;
     }
-    for (; n >= 64; p += 64, n -= 64)
-        sha256_block(s->h, p);
+    sha256_blocks(s->h, p, n / 64);
+    p += n - n % 64;
+    n %= 64;
     memcpy(s->buf, p, n);
     s->used = n;
 }
@@ -487,6 +588,7 @@ int uid_relid_ctx_init(uid_relid_ctx *ctx, const uint8_t *secret, size_t secret_
     if (secret_len < UID_RELID_MIN_SECRET || (uint64_t)salt_len > UINT32_MAX)
         return UID_ERR_INVALID;
     hmac_sha256_init(&ctx->inner, &ctx->outer, secret, secret_len);
+    memset(ctx->cache, 0, sizeof ctx->cache);
     for (int i = 0; i < 4; i++)
         prefix[i] = (uint8_t)((uint64_t)salt_len >> (24 - 8 * i));
     sha256_update(&ctx->inner, prefix, 4);
@@ -498,10 +600,54 @@ void uid_relid_ctx_wipe(uid_relid_ctx *ctx) {
     wipe(ctx, sizeof *ctx);
 }
 
-uint32_t uid_relid_tag(const uid_relid_ctx *ctx, const char *key, size_t key_len) {
-    uint8_t mac[32];
-    hmac_sha256_finish(ctx->inner, ctx->outer, (const uint8_t *)key, key_len, mac);
-    return ((uint32_t)mac[0] << 24 | (uint32_t)mac[1] << 16 | (uint32_t)mac[2] << 8 | mac[3]) >> 2;
+static void sha256_put_len(uint8_t *p, uint64_t bytes) {
+    for (int i = 0; i < 8; i++)
+        p[i] = (uint8_t)(bytes * 8 >> (56 - 8 * i));
+}
+
+static uint32_t relid_compute_tag(const uid_relid_ctx *ctx, const char *key, size_t key_len) {
+    size_t used = ctx->inner.used;
+    if (used + key_len > 55) {
+        uint8_t mac[32];
+        hmac_sha256_finish(ctx->inner, ctx->outer, (const uint8_t *)key, key_len, mac);
+        return ((uint32_t)mac[0] << 24 | (uint32_t)mac[1] << 16 | (uint32_t)mac[2] << 8 | mac[3]) >> 2;
+    }
+    /* Salt prefix and key fit in one inner block; the outer message is always one block. */
+    uint8_t block[64] = {0};
+    uint32_t h[8];
+    memcpy(block, ctx->inner.buf, used);
+    memcpy(block + used, key, key_len);
+    block[used + key_len] = 0x80;
+    sha256_put_len(block + 56, ctx->inner.total + key_len);
+    memcpy(h, ctx->inner.h, sizeof h);
+    sha256_blocks(h, block, 1);
+    for (int i = 0; i < 8; i++) {
+        block[4 * i] = (uint8_t)(h[i] >> 24);
+        block[4 * i + 1] = (uint8_t)(h[i] >> 16);
+        block[4 * i + 2] = (uint8_t)(h[i] >> 8);
+        block[4 * i + 3] = (uint8_t)h[i];
+    }
+    memset(block + 32, 0, 24);
+    block[32] = 0x80;
+    sha256_put_len(block + 56, 64 + 32);
+    memcpy(h, ctx->outer.h, sizeof h);
+    sha256_blocks(h, block, 1);
+    return h[0] >> 2;
+}
+
+uint32_t uid_relid_tag(uid_relid_ctx *ctx, const char *key, size_t key_len) {
+    if (key_len > UID_RELID_CACHE_KEY)
+        return relid_compute_tag(ctx, key, key_len);
+    uint32_t hash = 2166136261u; /* FNV-1a */
+    for (size_t i = 0; i < key_len; i++)
+        hash = (hash ^ (uint8_t)key[i]) * 16777619u;
+    uid_relid_cache_entry *e = &ctx->cache[hash % UID_RELID_CACHE_SLOTS];
+    if (e->len == key_len + 1 && memcmp(e->key, key, key_len) == 0)
+        return e->tag;
+    e->tag = relid_compute_tag(ctx, key, key_len);
+    e->len = (uint8_t)(key_len + 1);
+    memcpy(e->key, key, key_len);
+    return e->tag;
 }
 
 int uid_relid_from_parts(uid_relid *out, uint32_t tag, uint64_t timestamp_ms, uint64_t random) {
@@ -526,7 +672,7 @@ static int relid_random(uid_random_fn random, void *rctx, uint64_t *out) {
     return UID_OK;
 }
 
-int uid_relid_new(const uid_relid_ctx *ctx, const char *key, size_t key_len, uid_relid *out) {
+int uid_relid_new(uid_relid_ctx *ctx, const char *key, size_t key_len, uid_relid *out) {
     uint64_t now = uid_now_ms(), rand;
     int rc;
     if (now > UID_RELID_MAX_TIME)
@@ -561,7 +707,7 @@ int uid_relid_monotonic_next_custom_random(uid_relid_monotonic *st, uint32_t tag
     return uid_relid_from_parts(out, tag, st->last_ms, st->last_rand);
 }
 
-int uid_relid_monotonic_next(uid_relid_monotonic *st, const uid_relid_ctx *ctx, const char *key,
+int uid_relid_monotonic_next(uid_relid_monotonic *st, uid_relid_ctx *ctx, const char *key,
                              size_t key_len, uid_relid *out) {
     return uid_relid_monotonic_next_custom_random(st, uid_relid_tag(ctx, key, key_len),
                                                   uid_now_ms(), os_random, NULL, out);

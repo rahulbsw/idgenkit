@@ -207,6 +207,30 @@ func TestMonotonic(t *testing.T) {
 	}
 }
 
+func TestTagCache(t *testing.T) {
+	g, _ := New(testSecret, "orders")
+	keys := []string{strings.Repeat("k", cacheMaxKey), strings.Repeat("k", cacheMaxKey+1), ""}
+	for i := 0; i < 4*cacheSlots; i++ {
+		keys = append(keys, "customer-"+strconv.Itoa(i))
+	}
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for round := 0; round < 3; round++ {
+				for _, k := range keys {
+					if got, want := g.TagValue(k), g.computeTag(k); got != want {
+						t.Errorf("TagValue(%q) = %d, want %d", k, got, want)
+						return
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func BenchmarkGenerate(b *testing.B) {
 	g, _ := New(testSecret, "orders")
 	for i := 0; i < b.N; i++ {
