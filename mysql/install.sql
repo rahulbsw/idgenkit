@@ -9,6 +9,11 @@ CREATE FUNCTION uuidv4_generate RETURNS STRING SONAME 'idgenkit_udf.so';
 CREATE FUNCTION uuidv7_generate RETURNS STRING SONAME 'idgenkit_udf.so';
 CREATE FUNCTION uuidv7_generate_monotonic RETURNS STRING SONAME 'idgenkit_udf.so';
 CREATE FUNCTION uuidv7_timestamp RETURNS INTEGER SONAME 'idgenkit_udf.so';
+-- The relid_* functions need IDGENKIT_RELID_SECRET (at least 16 bytes) in the mysqld environment.
+CREATE FUNCTION relid_generate RETURNS STRING SONAME 'idgenkit_udf.so';
+CREATE FUNCTION relid_generate_monotonic RETURNS STRING SONAME 'idgenkit_udf.so';
+CREATE FUNCTION relid_tag RETURNS STRING SONAME 'idgenkit_udf.so';
+CREATE FUNCTION relid_timestamp RETURNS INTEGER SONAME 'idgenkit_udf.so';
 CREATE FUNCTION snowflake_generate RETURNS INTEGER SONAME 'idgenkit_udf.so';
 CREATE FUNCTION snowflake_timestamp RETURNS INTEGER SONAME 'idgenkit_udf.so';
 CREATE FUNCTION snowflake_machine_id RETURNS INTEGER SONAME 'idgenkit_udf.so';

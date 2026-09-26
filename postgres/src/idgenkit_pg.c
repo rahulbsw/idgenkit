@@ -1,5 +1,5 @@
 /*
- * PostgreSQL extension: ULID, UUIDv7, Snowflake and Nano ID generation.
+ * PostgreSQL extension: ULID, UUIDv7, relative ID, Snowflake and Nano ID generation.
  *
  * Snowflake state must be shared by every backend process, so it lives in
  * shared memory: static shared memory when loaded via shared_preload_libraries,
@@ -16,6 +16,7 @@
 #include "storage/shmem.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/memutils.h"
 #include "utils/timestamp.h"
 #include "utils/uuid.h"
 #if PG_VERSION_NUM >= 170000
@@ -35,6 +36,8 @@ void _PG_init(void);
 static int machine_id = 1;
 static char *snowflake_epoch_guc = NULL;
 static uint64 snowflake_epoch_ms = 0;
+static char *relid_secret = NULL;
+static bool preloaded = false;
 
 typedef struct SnowflakeShared {
     uint64 state;
@@ -45,6 +48,7 @@ typedef struct SnowflakeShared {
 static SnowflakeShared *snowflake_shared = NULL;
 static uid_ulid_monotonic ulid_mono;
 static uid_uuidv7_monotonic uuidv7_mono;
+static uid_relid_monotonic relid_mono;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 #if PG_VERSION_NUM >= 150000
@@ -149,6 +153,13 @@ void _PG_init(void) {
                                "Custom Snowflake epoch in milliseconds since 1970-01-01 UTC.",
                                "Captured at first use after server start.", &snowflake_epoch_guc, "0",
                                context, 0, check_epoch, assign_epoch, NULL);
+    DefineCustomStringVariable("idgenkit.relid_secret",
+                               "Secret (at least 16 bytes) keying relative ID tags.",
+                               "Visible to superusers only. Honoured only when idgenkit is in "
+                               "shared_preload_libraries.",
+                               &relid_secret, "", PGC_SUSET,
+                               GUC_SUPERUSER_ONLY | GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE, NULL, NULL,
+                               NULL);
 #if PG_VERSION_NUM >= 150000
     MarkGUCPrefixReserved("idgenkit");
 #else
@@ -157,6 +168,7 @@ void _PG_init(void) {
 
     if (!process_shared_preload_libraries_in_progress)
         return;
+    preloaded = true;
 #if PG_VERSION_NUM >= 150000
     prev_shmem_request_hook = shmem_request_hook;
     shmem_request_hook = idgenkit_shmem_request;
@@ -302,6 +314,104 @@ Datum idgenkit_uuidv7_timestamp(PG_FUNCTION_ARGS) {
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                  errmsg("uuid is version %u, not version 7", uid_uuid_version(&u))));
     PG_RETURN_TIMESTAMPTZ(unix_ms_to_timestamptz(ms));
+}
+
+/* ---- Relative ID ---------------------------------------------------------------- */
+
+#define RELID_SALT_CACHE 256
+
+static uid_relid_ctx relid_ctx;
+static char *relid_ctx_secret = NULL;
+static char relid_ctx_salt[RELID_SALT_CACHE];
+static int relid_ctx_salt_len = -1;
+
+/* The HMAC context for the current secret and this salt, reused while neither changes. */
+static const uid_relid_ctx *relid_context(text *salt_text) {
+    const char *salt = VARDATA_ANY(salt_text);
+    size_t salt_len = VARSIZE_ANY_EXHDR(salt_text);
+    size_t secret_len;
+
+    /* Without preloading, a configured secret is a placeholder any role can SHOW. */
+    if (!preloaded)
+        ereport(ERROR,
+                (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                 errmsg("relative IDs require idgenkit in shared_preload_libraries"),
+                 errhint("Add idgenkit to shared_preload_libraries so idgenkit.relid_secret is "
+                         "registered as superuser-only, then restart the server.")));
+    secret_len = relid_secret ? strlen(relid_secret) : 0;
+    if (secret_len < UID_RELID_MIN_SECRET)
+        ereport(ERROR,
+                (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                 errmsg("idgenkit.relid_secret must be set to at least %d bytes",
+                        UID_RELID_MIN_SECRET)));
+    if (relid_ctx_salt_len >= 0 && (size_t) relid_ctx_salt_len == salt_len &&
+        memcmp(relid_ctx_salt, salt, salt_len) == 0 && strcmp(relid_ctx_secret, relid_secret) == 0)
+        return &relid_ctx;
+
+    check_rc(uid_relid_ctx_init(&relid_ctx, (const uint8 *) relid_secret, secret_len, salt, salt_len));
+    if (relid_ctx_secret == NULL || strcmp(relid_ctx_secret, relid_secret) != 0) {
+        if (relid_ctx_secret) {
+            explicit_bzero(relid_ctx_secret, strlen(relid_ctx_secret));
+            pfree(relid_ctx_secret);
+        }
+        relid_ctx_secret = MemoryContextStrdup(TopMemoryContext, relid_secret);
+    }
+    if (salt_len <= RELID_SALT_CACHE) {
+        memcpy(relid_ctx_salt, salt, salt_len);
+        relid_ctx_salt_len = (int) salt_len;
+    } else {
+        relid_ctx_salt_len = -1;
+    }
+    return &relid_ctx;
+}
+
+static text *relid_to_text(const uid_relid *id) {
+    char buf[UID_RELID_LEN];
+
+    uid_relid_encode(id, buf);
+    return cstring_to_text_with_len(buf, UID_RELID_LEN);
+}
+
+PG_FUNCTION_INFO_V1(idgenkit_relid_generate);
+Datum idgenkit_relid_generate(PG_FUNCTION_ARGS) {
+    text *key = PG_GETARG_TEXT_PP(0);
+    const uid_relid_ctx *ctx = relid_context(PG_GETARG_TEXT_PP(1));
+    uid_relid id;
+
+    check_rc(uid_relid_new(ctx, VARDATA_ANY(key), VARSIZE_ANY_EXHDR(key), &id));
+    PG_RETURN_TEXT_P(relid_to_text(&id));
+}
+
+PG_FUNCTION_INFO_V1(idgenkit_relid_generate_monotonic);
+Datum idgenkit_relid_generate_monotonic(PG_FUNCTION_ARGS) {
+    text *key = PG_GETARG_TEXT_PP(0);
+    const uid_relid_ctx *ctx = relid_context(PG_GETARG_TEXT_PP(1));
+    uid_relid id;
+
+    check_rc(uid_relid_monotonic_next(&relid_mono, ctx, VARDATA_ANY(key), VARSIZE_ANY_EXHDR(key), &id));
+    PG_RETURN_TEXT_P(relid_to_text(&id));
+}
+
+PG_FUNCTION_INFO_V1(idgenkit_relid_tag);
+Datum idgenkit_relid_tag(PG_FUNCTION_ARGS) {
+    text *key = PG_GETARG_TEXT_PP(0);
+    const uid_relid_ctx *ctx = relid_context(PG_GETARG_TEXT_PP(1));
+    char buf[UID_RELID_TAG_LEN];
+
+    uid_relid_tag_encode(uid_relid_tag(ctx, VARDATA_ANY(key), VARSIZE_ANY_EXHDR(key)), buf);
+    PG_RETURN_TEXT_P(cstring_to_text_with_len(buf, UID_RELID_TAG_LEN));
+}
+
+PG_FUNCTION_INFO_V1(idgenkit_relid_timestamp);
+Datum idgenkit_relid_timestamp(PG_FUNCTION_ARGS) {
+    text *t = PG_GETARG_TEXT_PP(0);
+    uid_relid id;
+
+    if (uid_relid_decode(VARDATA_ANY(t), VARSIZE_ANY_EXHDR(t), &id) != UID_OK)
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                 errmsg("invalid relative ID: \"%s\"", text_to_cstring(t))));
+    PG_RETURN_TIMESTAMPTZ(unix_ms_to_timestamptz(id.timestamp_ms));
 }
 
 /* ---- Snowflake ---------------------------------------------------------------- */

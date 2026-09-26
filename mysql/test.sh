@@ -11,6 +11,8 @@ rm -rf "$ROOT"
 mkdir -p "$ROOT/data"
 
 mysqld --no-defaults --initialize-insecure --datadir="$ROOT/data" >"$ROOT/init.log" 2>&1
+# Test-only secret; vectors from ../testdata/relid_tag.txt.
+IDGENKIT_RELID_SECRET=0123456789abcdef \
 mysqld --no-defaults --datadir="$ROOT/data" --socket="$SOCK" --skip-networking --mysqlx=OFF \
   --plugin-dir="$PWD/build" --pid-file="$ROOT/mysqld.pid" --log-error="$ROOT/error.log" &
 PID=$!
@@ -71,6 +73,26 @@ expect "uuidv7_timestamp is now" '^1$' \
 expect "uuidv7_timestamp of v4 is NULL" '^NULL$' "$(q "SELECT uuidv7_timestamp(uuidv4_generate())")"
 expect "uuidv7_timestamp invalid is NULL" '^NULL$' "$(q "SELECT uuidv7_timestamp('{017f22e2-79b0-7cc3-98c4-dc0c0c07398f}')")"
 
+expect "relid_tag vectors" '^4V81BZ 5731MX$' \
+  "$(q "SELECT relid_tag('customer-42'), relid_tag('customer-42', 'orders')" | tr '\t' ' ')"
+expect "relid_generate format" '^5731MX-[0-7][0-9A-HJKMNP-TV-Z]{9}-[0-9A-HJKMNP-TV-Z]{10}$' \
+  "$(q "SELECT relid_generate('customer-42', 'orders')")"
+materialize "relid_generate(CONCAT('k', n % 7), IF(n % 2, 'orders', 'invoices'))"
+expect "relid_generate per row" '^20000$' "$(q "SELECT COUNT(DISTINCT v) FROM ids")"
+expect "relid_generate tags follow key and salt" '^14 14$' \
+  "$(q "SELECT COUNT(DISTINCT LEFT(v, 6)), COUNT(DISTINCT CONCAT(n % 7, n % 2)) FROM ids" | tr '\t' ' ')"
+expect "relid_generate tag matches relid_tag" '^0$' \
+  "$(q "SELECT COUNT(*) FROM ids WHERE LEFT(v, 6) <> relid_tag(CONCAT('k', n % 7), IF(n % 2, 'orders', 'invoices'))")"
+materialize "relid_generate_monotonic(IF(n % 3, 'a', 'b'))"
+expect "relid_generate_monotonic ordered per key" '^0$' \
+  "$(q "SELECT COUNT(*) FROM (SELECT v, LAG(v) OVER (PARTITION BY LEFT(v, 6) ORDER BY n) p FROM ids) b WHERE p >= v")"
+expect "relid_timestamp vector" '^1469918176385 1469918176385$' \
+  "$(q "SELECT relid_timestamp('0AQKFF-01ARYZ6S41-RJ6HB7H6NW'), relid_timestamp('0aqkff01aryz6s41rj6hb7h6nw')" | tr '\t' ' ')"
+expect "relid_timestamp is now" '^1$' \
+  "$(q "SELECT ABS(relid_timestamp(relid_generate('k')) - UNIX_TIMESTAMP(NOW(3)) * 1000) < 5000")"
+expect "relid_timestamp invalid is NULL" '^NULL$' "$(q "SELECT relid_timestamp('0AQKFF-81ARYZ6S41-RJ6HB7H6NW')")"
+expect "relid_generate NULL key" '^NULL$' "$(q "SELECT relid_generate(NULL)")"
+
 materialize "snowflake_generate()"
 expect "snowflake per row unique" '^20000$' "$(q "SELECT COUNT(DISTINCT v) FROM ids")"
 expect "snowflake ordered" '^0$' \
@@ -101,7 +123,8 @@ if [[ "${1:-}" == "--bench" ]]; then
   N=${BENCH_N:-1000000}
   echo "# MySQL $(q "SELECT VERSION()"), BENCHMARK($N, expr), single connection"
   for expr in "UUID()" "ulid_generate()" "ulid_generate_monotonic()" "uuidv4_generate()" \
-              "uuidv7_generate()" "uuidv7_generate_monotonic()" "snowflake_generate()" \
+              "uuidv7_generate()" "uuidv7_generate_monotonic()" \
+              "relid_generate('customer-42')" "relid_generate_monotonic('customer-42')" "snowflake_generate()" \
               "nanoid_generate()" "nanoid_generate(21, '0123456789abcdef')"; do
     start=$(python3 -c 'import time; print(time.time_ns())')
     q "SELECT BENCHMARK($N, $expr)" >/dev/null

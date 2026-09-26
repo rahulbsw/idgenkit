@@ -56,6 +56,9 @@ else
 fi
 [[ "$(np -c "SELECT length(ulid_generate()) + length(nanoid_generate())")" == "47" ]] \
   && echo "PASS ulid/nanoid without preload" || { echo "FAIL ulid/nanoid without preload"; exit 1; }
+result=$(np -c "SET idgenkit.relid_secret = 'test-only-secret-0123456789'" -c "SELECT relid_generate('k')" || true)
+[[ "$result" == *"shared_preload_libraries"* ]] \
+  && echo "PASS relative IDs refuse to run without preload" || { echo "FAIL got: $result"; exit 1; }
 docker rm -f "$NOPRE" >/dev/null
 
 if [[ "${1:-}" == "--bench" ]]; then
@@ -64,10 +67,12 @@ if [[ "${1:-}" == "--bench" ]]; then
   base_ms=""
   for expr in "n" "gen_random_uuid()" "ulid_generate()" "ulid_generate_monotonic()" "ulid_generate_uuid()" \
               "uuidv7_generate()" "uuidv7_generate_monotonic()" \
+              "relid_generate('customer-42')" "relid_generate_monotonic('customer-42')" \
               "snowflake_generate()" "nanoid_generate()" "nanoid_generate(21, '0123456789abcdef')"; do
     best=""
     for _ in 1 2 3; do
-      ms=$(docker exec -i "$NAME" psql -U postgres -X -d postgres -c '\timing on' \
+      ms=$(docker exec -i -e PGOPTIONS='-c idgenkit.relid_secret=bench-only-secret-0123456789' \
+        "$NAME" psql -U postgres -X -d postgres -c '\timing on' \
         -c "SELECT count($expr) FROM generate_series(1, $N) n" | awk '/^Time:/ {print $2}')
       best=$(awk -v a="$ms" -v b="$best" 'BEGIN { print (b == "" || a < b) ? a : b }')
     done

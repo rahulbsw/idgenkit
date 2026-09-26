@@ -1,12 +1,12 @@
 /*
- * MySQL / MariaDB loadable functions (UDFs) for ULID, UUIDv4/v7, Snowflake and
- * Nano ID. See install.sql for the CREATE FUNCTION statements.
+ * MySQL / MariaDB loadable functions (UDFs) for ULID, UUIDv4/v7, relative ID,
+ * Snowflake and Nano ID. See install.sql for the CREATE FUNCTION statements.
  *
  * Concurrency: MySQL runs UDFs concurrently from many connection threads.
  *  - Snowflake state is one process-wide word updated with atomic CAS, so IDs
  *    are unique across all connections of the server.
- *  - Monotonic ULID and UUIDv7 state is thread-local: monotonic per connection
- *    thread, globally unique through their 80 / 74 random bits.
+ *  - Monotonic ULID, UUIDv7 and relative ID state is thread-local: monotonic
+ *    per connection thread, globally unique through their 80 / 74 / 50 random bits.
  */
 #include <stdbool.h>
 #include <stdio.h>
@@ -224,6 +224,175 @@ long long uuidv7_timestamp(UDF_INIT *initid, UDF_ARGS *args, unsigned char *is_n
         return 0;
     }
     return (long long)ms;
+}
+
+/* ---- Relative ID ---------------------------------------------------------------
+ * The secret comes from the mysqld environment (IDGENKIT_RELID_SECRET), so it
+ * never appears in SQL text, logs or system variables. */
+
+#define RELID_SECRET_ENV "IDGENKIT_RELID_SECRET"
+#define RELID_SALT_CACHE 256
+
+struct relid_state {
+    uid_relid_ctx ctx;
+    char salt[RELID_SALT_CACHE];
+    int salt_len; /* -1: ctx does not match any cached salt */
+};
+
+static bool relid_init(UDF_INIT *initid, UDF_ARGS *args, char *message, unsigned long max_length,
+                       const char *usage) {
+    const char *secret = getenv(RELID_SECRET_ENV);
+    struct relid_state *st;
+
+    init_volatile(initid, true, max_length);
+    if (require_args(args, message, 1, 2, usage))
+        return true;
+    if (secret == NULL || strlen(secret) < UID_RELID_MIN_SECRET) {
+        snprintf(message, MYSQL_ERRMSG_SIZE,
+                 "set %s (at least %d bytes) in the mysqld environment", RELID_SECRET_ENV,
+                 UID_RELID_MIN_SECRET);
+        return true;
+    }
+    for (unsigned i = 0; i < args->arg_count; i++)
+        args->arg_type[i] = STRING_RESULT;
+    st = malloc(sizeof *st);
+    if (st == NULL) {
+        snprintf(message, MYSQL_ERRMSG_SIZE, "out of memory");
+        return true;
+    }
+    st->salt_len = -1;
+    initid->ptr = (char *)st;
+    return false;
+}
+
+static void relid_deinit(UDF_INIT *initid) {
+    struct relid_state *st = (struct relid_state *)initid->ptr;
+    if (st) {
+        uid_relid_ctx_wipe(&st->ctx);
+        free(st);
+    }
+}
+
+/* The context for this row's salt (argument 2, default ''), or NULL on error. */
+static const uid_relid_ctx *relid_context(UDF_INIT *initid, UDF_ARGS *args) {
+    struct relid_state *st = (struct relid_state *)initid->ptr;
+    const char *salt = "", *secret = getenv(RELID_SECRET_ENV);
+    size_t salt_len = 0;
+
+    if (args->arg_count > 1 && args->args[1] != NULL) {
+        salt = args->args[1];
+        salt_len = args->lengths[1];
+    }
+    if (st->salt_len >= 0 && (size_t)st->salt_len == salt_len && memcmp(st->salt, salt, salt_len) == 0)
+        return &st->ctx;
+    if (secret == NULL ||
+        uid_relid_ctx_init(&st->ctx, (const uint8_t *)secret, strlen(secret), salt, salt_len) != UID_OK)
+        return NULL;
+    if (salt_len <= RELID_SALT_CACHE) {
+        memcpy(st->salt, salt, salt_len);
+        st->salt_len = (int)salt_len;
+    } else {
+        st->salt_len = -1;
+    }
+    return &st->ctx;
+}
+
+static __thread uid_relid_monotonic relid_mono;
+
+static char *relid_result(UDF_INIT *initid, UDF_ARGS *args, bool monotonic, char *result,
+                          unsigned long *length, unsigned char *is_null, unsigned char *error) {
+    const uid_relid_ctx *ctx;
+    uid_relid id;
+    int rc;
+
+    if (args->args[0] == NULL) {
+        *is_null = 1;
+        return NULL;
+    }
+    ctx = relid_context(initid, args);
+    if (ctx == NULL) {
+        *error = 1;
+        return NULL;
+    }
+    rc = monotonic ? uid_relid_monotonic_next(&relid_mono, ctx, args->args[0], args->lengths[0], &id)
+                   : uid_relid_new(ctx, args->args[0], args->lengths[0], &id);
+    if (rc != UID_OK) {
+        *error = 1;
+        return NULL;
+    }
+    uid_relid_encode(&id, result);
+    *length = UID_RELID_LEN;
+    return result;
+}
+
+bool relid_generate_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+    return relid_init(initid, args, message, UID_RELID_LEN, "usage: relid_generate(key [, salt])");
+}
+
+void relid_generate_deinit(UDF_INIT *initid) {
+    relid_deinit(initid);
+}
+
+char *relid_generate(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length,
+                     unsigned char *is_null, unsigned char *error) {
+    return relid_result(initid, args, false, result, length, is_null, error);
+}
+
+bool relid_generate_monotonic_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+    return relid_init(initid, args, message, UID_RELID_LEN,
+                      "usage: relid_generate_monotonic(key [, salt])");
+}
+
+void relid_generate_monotonic_deinit(UDF_INIT *initid) {
+    relid_deinit(initid);
+}
+
+char *relid_generate_monotonic(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length,
+                               unsigned char *is_null, unsigned char *error) {
+    return relid_result(initid, args, true, result, length, is_null, error);
+}
+
+bool relid_tag_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+    return relid_init(initid, args, message, UID_RELID_TAG_LEN, "usage: relid_tag(key [, salt])");
+}
+
+void relid_tag_deinit(UDF_INIT *initid) {
+    relid_deinit(initid);
+}
+
+char *relid_tag(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length,
+                unsigned char *is_null, unsigned char *error) {
+    const uid_relid_ctx *ctx;
+    if (args->args[0] == NULL) {
+        *is_null = 1;
+        return NULL;
+    }
+    ctx = relid_context(initid, args);
+    if (ctx == NULL) {
+        *error = 1;
+        return NULL;
+    }
+    uid_relid_tag_encode(uid_relid_tag(ctx, args->args[0], args->lengths[0]), result);
+    *length = UID_RELID_TAG_LEN;
+    return result;
+}
+
+bool relid_timestamp_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+    return one_string_arg(initid, args, message, 21, "usage: relid_timestamp(relative_id)");
+}
+
+long long relid_timestamp(UDF_INIT *initid, UDF_ARGS *args, unsigned char *is_null, unsigned char *error) {
+    (void)initid;
+    uid_relid id;
+    if (args->args[0] == NULL) {
+        *is_null = 1;
+        return 0;
+    }
+    if (uid_relid_decode(args->args[0], args->lengths[0], &id) != UID_OK) {
+        *error = 1;
+        return 0;
+    }
+    return (long long)id.timestamp_ms;
 }
 
 /* ---- Snowflake -------------------------------------------------------------- */

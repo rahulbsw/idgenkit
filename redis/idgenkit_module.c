@@ -1,7 +1,11 @@
 /*
- * Redis module exposing ULID, UUIDv4/v7, Snowflake and Nano ID generation.
+ * Redis module exposing ULID, UUIDv4/v7, relative ID, Snowflake and Nano ID
+ * generation.
  *
  *   loadmodule /path/idgenkit.so [MACHINE_ID <0-1023>] [EPOCH_MS <ms>]
+ *
+ * The RELID.* commands need IDGENKIT_RELID_SECRET (at least 16 bytes) in the
+ * redis-server environment when the module loads.
  *
  * Commands (all keyless, O(1)):
  *   ULID.GENERATE                     -> 26-char ULID
@@ -11,6 +15,10 @@
  *   UUIDV7.GENERATE                   -> 36-char time-ordered UUID
  *   UUIDV7.MONOTONIC                  -> strictly increasing UUIDv7
  *   UUIDV7.TIME <uuid>                -> embedded Unix time in ms
+ *   RELID.GENERATE <key> [salt]       -> 28-char relative ID tagged by key
+ *   RELID.MONOTONIC <key> [salt]      -> relative ID from a shared counter
+ *   RELID.TAG <key> [salt]            -> the 6-char tag that starts key's IDs
+ *   RELID.TIME <id>                   -> embedded Unix time in ms
  *   SNOWFLAKE.GENERATE                -> 64-bit integer id
  *   SNOWFLAKE.PARSE <id>              -> [timestamp_ms, machine_id, sequence]
  *   NANOID.GENERATE [size [alphabet]] -> Nano ID (default size 21, URL alphabet)
@@ -21,6 +29,7 @@
 #include "redismodule_min.h"
 #include "idgenkit.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -126,6 +135,88 @@ static int Uuidv7Time(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     return RedisModule_ReplyWithLongLong(ctx, (long long)ms);
 }
 
+/* The secret comes from the environment, not loadmodule arguments, which
+ * MODULE LIST and INFO would reveal. */
+#define RELID_SECRET_ENV "IDGENKIT_RELID_SECRET"
+#define RELID_SALT_CACHE 256
+
+static char *relid_secret = NULL;
+static uid_relid_ctx relid_ctx;
+static char relid_salt[RELID_SALT_CACHE];
+static int relid_salt_len = -1;
+static uid_relid_monotonic relid_mono;
+
+/* Replies with an error and returns NULL if relative IDs are not configured. */
+static const uid_relid_ctx *relid_context(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    size_t salt_len = 0;
+    const char *salt = argc == 3 ? RedisModule_StringPtrLen(argv[2], &salt_len) : "";
+    if (relid_secret == NULL) {
+        RedisModule_ReplyWithError(ctx, "ERR set " RELID_SECRET_ENV
+                                        " (at least 16 bytes) in the redis-server environment");
+        return NULL;
+    }
+    if (relid_salt_len >= 0 && (size_t)relid_salt_len == salt_len && memcmp(relid_salt, salt, salt_len) == 0)
+        return &relid_ctx;
+    uid_relid_ctx_init(&relid_ctx, (const uint8_t *)relid_secret, strlen(relid_secret), salt, salt_len);
+    if (salt_len <= RELID_SALT_CACHE) {
+        memcpy(relid_salt, salt, salt_len);
+        relid_salt_len = (int)salt_len;
+    } else {
+        relid_salt_len = -1;
+    }
+    return &relid_ctx;
+}
+
+static int relid_reply(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, int monotonic) {
+    if (argc != 2 && argc != 3)
+        return RedisModule_WrongArity(ctx);
+    const uid_relid_ctx *rctx = relid_context(ctx, argv, argc);
+    if (rctx == NULL)
+        return REDISMODULE_OK;
+    size_t len;
+    const char *key = RedisModule_StringPtrLen(argv[1], &len);
+    uid_relid id;
+    int rc = monotonic ? uid_relid_monotonic_next(&relid_mono, rctx, key, len, &id)
+                       : uid_relid_new(rctx, key, len, &id);
+    if (rc != UID_OK)
+        return reply_error(ctx, rc);
+    char text[UID_RELID_LEN];
+    uid_relid_encode(&id, text);
+    return RedisModule_ReplyWithStringBuffer(ctx, text, sizeof text);
+}
+
+static int RelidGenerate(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    return relid_reply(ctx, argv, argc, 0);
+}
+
+static int RelidMonotonic(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    return relid_reply(ctx, argv, argc, 1);
+}
+
+static int RelidTag(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (argc != 2 && argc != 3)
+        return RedisModule_WrongArity(ctx);
+    const uid_relid_ctx *rctx = relid_context(ctx, argv, argc);
+    if (rctx == NULL)
+        return REDISMODULE_OK;
+    size_t len;
+    const char *key = RedisModule_StringPtrLen(argv[1], &len);
+    char text[UID_RELID_TAG_LEN];
+    uid_relid_tag_encode(uid_relid_tag(rctx, key, len), text);
+    return RedisModule_ReplyWithStringBuffer(ctx, text, sizeof text);
+}
+
+static int RelidTime(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (argc != 2)
+        return RedisModule_WrongArity(ctx);
+    size_t len;
+    const char *s = RedisModule_StringPtrLen(argv[1], &len);
+    uid_relid id;
+    if (uid_relid_decode(s, len, &id) != UID_OK)
+        return RedisModule_ReplyWithError(ctx, "ERR invalid relative ID");
+    return RedisModule_ReplyWithLongLong(ctx, (long long)id.timestamp_ms);
+}
+
 static int SnowflakeGenerate(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     (void)argv;
     if (argc != 1)
@@ -196,6 +287,9 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
         return REDISMODULE_ERR;
     if (parse_args(argv, argc) != REDISMODULE_OK)
         return REDISMODULE_ERR;
+    const char *secret = getenv(RELID_SECRET_ENV);
+    if (secret != NULL && strlen(secret) >= UID_RELID_MIN_SECRET)
+        relid_secret = strdup(secret);
     struct {
         const char *name;
         RedisModuleCmdFunc fn;
@@ -205,6 +299,8 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
         {"snowflake.parse", SnowflakeParse},     {"nanoid.generate", NanoidGenerate},
         {"uuidv4.generate", Uuidv4Generate},     {"uuidv7.generate", Uuidv7Generate},
         {"uuidv7.monotonic", Uuidv7Monotonic},   {"uuidv7.time", Uuidv7Time},
+        {"relid.generate", RelidGenerate},       {"relid.monotonic", RelidMonotonic},
+        {"relid.tag", RelidTag},                 {"relid.time", RelidTime},
     };
     for (size_t i = 0; i < sizeof cmds / sizeof cmds[0]; i++) {
         if (RedisModule_CreateCommand(ctx, cmds[i].name, cmds[i].fn, "fast", 0, 0, 0) != REDISMODULE_OK)

@@ -52,6 +52,29 @@ AS 'MODULE_PATHNAME', 'idgenkit_uuidv7_timestamp'
 LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION uuidv7_timestamp(uuid) IS 'Creation time of a UUIDv7; error for other versions';
 
+-- Relative ID ------------------------------------------------------------------
+-- Keyed by idgenkit.relid_secret, which needs idgenkit in shared_preload_libraries.
+-- Every role with EXECUTE can compute tags; revoke it from roles that should not.
+
+CREATE FUNCTION relid_generate(key text, salt text DEFAULT '') RETURNS text
+AS 'MODULE_PATHNAME', 'idgenkit_relid_generate'
+LANGUAGE C VOLATILE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION relid_generate(text, text) IS 'Relative ID: 30-bit keyed tag of (salt, key) + 48-bit ms timestamp + 50 random bits';
+
+CREATE FUNCTION relid_generate_monotonic(key text, salt text DEFAULT '') RETURNS text
+AS 'MODULE_PATHNAME', 'idgenkit_relid_generate_monotonic'
+LANGUAGE C VOLATILE STRICT PARALLEL RESTRICTED;
+COMMENT ON FUNCTION relid_generate_monotonic(text, text) IS 'Relative ID from a counter shared by every key in the current session';
+
+CREATE FUNCTION relid_tag(key text, salt text DEFAULT '') RETURNS text
+AS 'MODULE_PATHNAME', 'idgenkit_relid_tag'
+LANGUAGE C STABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION relid_tag(text, text) IS 'The 6-character tag that starts every relative ID for (salt, key); select them with LIKE tag || ''-%''';
+
+CREATE FUNCTION relid_timestamp(text) RETURNS timestamptz
+AS 'MODULE_PATHNAME', 'idgenkit_relid_timestamp'
+LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
 -- Snowflake --------------------------------------------------------------------
 -- Configured with idgenkit.machine_id and idgenkit.snowflake_epoch_ms (server start only).
 

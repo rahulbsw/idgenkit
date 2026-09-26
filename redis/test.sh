@@ -5,7 +5,8 @@ cd "$(dirname "$0")"
 
 PORT=${REDIS_TEST_PORT:-6399}
 MODULE="$PWD/build/idgenkit.so"
-redis-server --port "$PORT" --save "" --appendonly no --daemonize no \
+# Test-only secret; vectors from ../testdata/relid_tag.txt.
+IDGENKIT_RELID_SECRET=0123456789abcdef redis-server --port "$PORT" --save "" --appendonly no --daemonize no \
   --loadmodule "$MODULE" MACHINE_ID 42 EPOCH_MS 1600000000000 >build/redis-test.log 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null || true' EXIT
@@ -41,6 +42,20 @@ expect "uuidv7.monotonic 2000 increasing and unique" '^2000$' \
 expect "uuidv4 2000 unique" '^2000$' \
   "$(for _ in $(seq 2000); do echo uuidv4.generate; done | cli | sort -u | wc -l | tr -d ' ')"
 
+expect "relid.tag vectors" '^4V81BZ 5731MX $' \
+  "$(printf 'relid.tag customer-42\nrelid.tag customer-42 orders\n' | cli | tr '\n' ' ')"
+expect "relid.generate format" '^5731MX-[0-7][0-9A-HJKMNP-TV-Z]{9}-[0-9A-HJKMNP-TV-Z]{10}$' \
+  "$(cli relid.generate customer-42 orders)"
+expect "relid.time vector" '^1469918176385$' "$(cli relid.time 0AQKFF-01ARYZ6S41-RJ6HB7H6NW)"
+expect "relid.time bare lowercase" '^1469918176385$' "$(cli relid.time 0aqkff01aryz6s41rj6hb7h6nw)"
+expect "relid.time rejects overflow" 'ERR' "$(cli relid.time 0AQKFF-81ARYZ6S41-RJ6HB7H6NW 2>&1)"
+relids=$(for _ in $(seq 2000); do echo relid.monotonic customer-42; done | cli)
+expect "relid.monotonic 2000 increasing and unique" '^2000$' \
+  "$(sort -u <<<"$relids" | wc -l | tr -d ' ')$([[ "$(LC_ALL=C sort <<<"$relids")" == "$relids" ]] || echo ' (out of order)')"
+expect "relid.generate 2000 unique" '^2000$' \
+  "$(for _ in $(seq 2000); do echo relid.generate k; done | cli | sort -u | wc -l | tr -d ' ')"
+expect "relid wrong arity" 'ERR' "$(cli relid.generate 2>&1)"
+
 id=$(cli snowflake.generate)
 expect "snowflake.generate integer" '^[0-9]+$' "$id"
 parts=$(cli snowflake.parse "$id" | tr '\n' ' ')
@@ -60,5 +75,13 @@ expect "nanoid alphabet" '^[0-9a-f]{12}$' "$(cli nanoid.generate 12 0123456789ab
 expect "nanoid rejects size 0" 'ERR' "$(cli nanoid.generate 0 2>&1)"
 expect "nanoid rejects empty alphabet" 'ERR' "$(cli nanoid.generate 5 '' 2>&1)"
 expect "wrong arity" 'ERR' "$(cli ulid.generate extra 2>&1)"
+
+NOSECRET_PORT=$((PORT + 1))
+env -u IDGENKIT_RELID_SECRET redis-server --port "$NOSECRET_PORT" --save "" --appendonly no --daemonize no \
+  --loadmodule "$MODULE" >build/redis-test-nosecret.log 2>&1 &
+NOSECRET_PID=$!
+trap 'kill $PID $NOSECRET_PID 2>/dev/null; wait $PID $NOSECRET_PID 2>/dev/null || true' EXIT
+for _ in $(seq 50); do redis-cli -p "$NOSECRET_PORT" ping >/dev/null 2>&1 && break; sleep 0.1; done
+expect "relid without a secret" 'IDGENKIT_RELID_SECRET' "$(redis-cli -p "$NOSECRET_PORT" relid.generate k 2>&1)"
 
 exit $fail
