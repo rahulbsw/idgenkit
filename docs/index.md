@@ -41,6 +41,9 @@ where UUIDv4 and UUIDv7 are the better choice. In short:
   or UUIDv4. Never use Snowflake or a sequence for public identifiers.
 - **Your database shards by key range (Spanner, CockroachDB, TiDB, HBase):**
   prefer random keys. Time-ordered keys concentrate new writes on one shard.
+- **You read records per customer or tenant, newest first:** use a relative ID.
+  Its keyed 6-character prefix groups one owner's IDs in time order without
+  revealing who the owner is. See the [specification](ALGORITHMS.md#relative-id).
 
 ## Get it
 

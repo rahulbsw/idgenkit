@@ -25,6 +25,11 @@ give you something UUID doesn't. Storage figures come from the
   operational constraints of any format here.
 - **Nano ID** earns its place for short, public, URL-safe tokens, with a
   configurable length and alphabet.
+- **Relative ID** earns its place when you mostly read records per owner, such
+  as a customer or tenant. Its 6-character keyed tag groups each owner's IDs so
+  they sort by time within that group. A prefix scan then finds them without a
+  separate owner column or index, and the tag doesn't reveal the owner. It
+  needs a secret, and it's 28 characters with no native binary type.
 
 ## The formats side by side
 
@@ -145,6 +150,7 @@ libraries.
 | IDs that live in URLs, file names or object-store keys | ULID | 26 case-insensitive characters, sorted by time |
 | Interop with systems that have a native UUID type | UUIDv7 or UUIDv4 | Standard type, no conversion |
 | Records whose creation time is sensitive | UUIDv4 or Nano ID | Time-ordered IDs reveal it |
+| Records read per customer or tenant, in time order | Relative ID | Keyed prefix clusters each owner's IDs; one prefix scan per owner |
 
 ## Things to check in your own stack
 

@@ -1,12 +1,13 @@
 # idgenkit
 
-Dependency-free generators for four unique-ID schemes, implemented natively in
+Dependency-free generators for five unique-ID schemes, implemented natively in
 Java, Rust, Go and Python, with database extensions for PostgreSQL, MySQL and Redis.
 
 | Scheme | Size | Sortable | Spec |
 |---|---|---|---|
 | ULID | 128 bit, 26 chars Crockford base32 | by time (ms) | [ulid/spec](https://github.com/ulid/spec) |
 | UUIDv7 / UUIDv4 | 128 bit, 36 chars hex | v7 by time (ms), v4 no | [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562) |
+| Relative ID | 128 bit, 28 chars `TTTTTT-MMMMMMMMMM-RRRRRRRRRR` | by key tag, then time (ms) | [docs/ALGORITHMS.md](docs/ALGORITHMS.md#relative-id) |
 | Snowflake | 64 bit integer | by time (ms) | [dustinrouillard/snowflake-id](https://github.com/dustinrouillard/snowflake-id) |
 | Nano ID | 21 chars URL-safe (configurable) | no | [ai/nanoid](https://github.com/ai/nanoid) |
 
@@ -27,7 +28,7 @@ Documentation: <http://github.datasierra.com/idgenkit/>, with sources in [`docs/
 
 ```
 c/          shared C99 core used by the database extensions (+ tests, benchmark)
-go/         Go module   github.com/rahulbsw/idgenkit/go   (ulid, uuid, snowflake, nanoid)
+go/         Go module   github.com/rahulbsw/idgenkit/go   (ulid, uuid, relid, snowflake, nanoid)
 rust/       Rust crate  idgenkit                           (no dependencies)
 java/       Java 17+    io.github.rahulbsw:idgenkit        (Maven pom + plain Makefile)
 python/     Python 3.9+ package idgenkit                   (pure Python)
@@ -51,6 +52,34 @@ Requirements per component: Go ≥ 1.22, Rust ≥ 1.74, JDK ≥ 17, Python ≥ 3
 compiler; `redis-server` for Redis, `mysqld`/`mysql_config` for MySQL, and Docker
 (or podman) for PostgreSQL (the extension is built inside the official
 `postgres:<major>` image, so no local `pg_config` is needed).
+
+## Relative IDs
+
+A relative ID starts with a 6-character tag derived from a key you choose, such
+as a customer or tenant id, followed by a ULID-style timestamp and random part:
+
+```
+4V81BZ-01ARYZ6S41-RJ6HB7H6NW
+tag    time (ms)  random (50 bits)
+```
+
+Every ID for the same key shares its tag, so one key's IDs sort together and
+by time. You can fetch them with a prefix range scan (`LIKE '4V81BZ-%'`)
+without storing the key, and the tag doesn't reveal the key. The tag is the top
+30 bits of `HMAC-SHA-256(secret, salt, key)`:
+
+- **Secret:** at least 16 bytes. Load it from a secret manager or the
+  environment; never put it in source code. Anyone with the secret can check a
+  guessed key against a tag, and rotating it changes every key's tag.
+- **Salt:** optional and not secret. It separates contexts, so
+  `customer-42` gets different tags for `orders` and `invoices`.
+- **Tag collisions:** 30 bits means different keys can share a tag (50% chance
+  somewhere among about 38,600 keys). Treat the tag as a way to narrow a range
+  scan, and still filter by the real key when the answer must be exact.
+
+Parsing accepts the hyphenated form, or 26 characters without hyphens, in
+either case. Monotonic generators keep one counter shared by all keys and
+follow the ULID rules.
 
 ## Libraries
 
@@ -81,6 +110,12 @@ parts := gen.Parse(sf)              // TimestampMs, MachineID, Sequence
 s := nanoid.New()                   // 21 chars, URL alphabet
 hex, err := nanoid.CustomAlphabet("0123456789abcdef", 12)
 s = hex.Generate()
+
+rel, err := relid.New([]byte(os.Getenv("IDGENKIT_RELID_SECRET")), "orders") // import ".../go/relid"
+r, err := rel.Generate("customer-42")   // "5731MX-01J...-..."
+r, err = rel.Monotonic("customer-42")
+prefix := rel.Tag("customer-42")        // "5731MX"
+p, err := relid.Parse(r)                // p.Tag, p.Time, p.Random
 ```
 
 ### Rust
@@ -106,6 +141,14 @@ let parts = gen.parse(sf);
 let s = nanoid::nanoid();
 let hex = nanoid::CustomAlphabet::new("0123456789abcdef", 12)?;
 let s = hex.generate();
+
+use idgenkit::relid::{Parts, RelativeId};
+let secret = std::env::var("IDGENKIT_RELID_SECRET")?;
+let rel = RelativeId::new(secret.as_bytes(), "orders")?; // Sync
+let r = rel.generate("customer-42")?;
+let r = rel.monotonic("customer-42")?;
+let prefix = rel.tag("customer-42");
+let p = Parts::parse(&r)?;                  // tag, timestamp_ms, random
 ```
 
 ### Java
@@ -132,6 +175,13 @@ Snowflake.Parts parts = gen.parse(sf);
 String s = NanoId.generate();
 NanoId hex = NanoId.customAlphabet("0123456789abcdef", 12);
 String h = hex.next();
+
+byte[] secret = System.getenv("IDGENKIT_RELID_SECRET").getBytes(StandardCharsets.UTF_8);
+RelativeId rel = new RelativeId(secret, "orders");  // thread-safe
+String r = rel.generate("customer-42");
+String m = rel.monotonic("customer-42");
+String prefix = rel.tag("customer-42");
+RelativeId.Parts p = RelativeId.parse(r);           // tag(), timestampMs(), random()
 ```
 
 Build with Maven (`mvn package`) or without it: `make -C java test bench jar`
@@ -160,6 +210,14 @@ parts = gen.parse(sf)           # SnowflakeParts(timestamp_ms, machine_id, seque
 s = nanoid()
 hex_id = custom_alphabet("0123456789abcdef", 12)
 h = hex_id()
+
+from idgenkit import RelativeId
+from idgenkit.relid import parse
+rel = RelativeId(os.environb[b"IDGENKIT_RELID_SECRET"], salt="orders")  # thread-safe
+r = rel.generate("customer-42")
+m = rel.monotonic("customer-42")
+prefix = rel.tag("customer-42")
+p = parse(r)                    # RelativeIdParts(tag, timestamp_ms, random)
 ```
 
 ## Database extensions
@@ -191,16 +249,31 @@ SELECT snowflake_from_timestamp(now());    -- lower bound for range scans
 SELECT nanoid_generate();                  -- 21 chars
 SELECT nanoid_generate(12, '0123456789abcdef');
 
+SELECT relid_generate('customer-42', 'orders');            -- text, 28 chars; salt defaults to ''
+SELECT relid_generate_monotonic('customer-42');            -- per-backend monotonic
+SELECT * FROM orders WHERE id LIKE relid_tag('customer-42', 'orders') || '-%';
+SELECT relid_timestamp(id);                                -- timestamptz
+
 CREATE TABLE t (id uuid PRIMARY KEY DEFAULT ulid_generate_uuid(), ...);
 ```
 
 Settings (in `postgresql.conf`):
 
 ```
-shared_preload_libraries = 'idgenkit'   # recommended
+shared_preload_libraries = 'idgenkit'   # recommended; required for relid_*
 idgenkit.machine_id = 7                 # 0..1023, default 1
 idgenkit.snowflake_epoch_ms = '1288834974657'   # default 0 (Unix epoch)
+idgenkit.relid_secret = '...'           # at least 16 bytes; superuser only
 ```
+
+`idgenkit.relid_secret` can only be set and read by superusers, and is hidden
+from `SHOW ALL` and `pg_settings` for everyone else. Keep it in a config file
+readable only by the server, such as one pulled in with `include`, rather than
+in `postgresql.conf` under version control. Without preloading, PostgreSQL
+can't protect the setting, so the `relid_*` functions refuse to run. Any role
+that can execute `relid_tag` can compute tags for keys it guesses, so revoke
+`EXECUTE` from roles that shouldn't. Use `COLLATE "C"` for relative ID columns
+so that `LIKE` prefix scans can use a B-tree index.
 
 Snowflake state lives in shared memory, so all backends of one server share a
 single sequence and never collide. With `shared_preload_libraries` the segment
@@ -231,7 +304,14 @@ SELECT uuidv7_timestamp(u);                           -- ms, from text or UUID_T
 SELECT snowflake_generate(), snowflake_generate(7), snowflake_generate(7, 1288834974657);
 SELECT snowflake_timestamp(id), snowflake_machine_id(id), snowflake_sequence(id);
 SELECT nanoid_generate(), nanoid_generate(12, '0123456789abcdef');
+SELECT relid_generate('customer-42', 'orders'), relid_generate_monotonic('customer-42');
+SELECT relid_tag('customer-42', 'orders'), relid_timestamp(id);   -- ms, NULL if invalid
 ```
+
+The `relid_*` functions read their secret (at least 16 bytes) from the
+`IDGENKIT_RELID_SECRET` environment variable of the `mysqld` process, for
+example through a systemd `EnvironmentFile=` readable only by root. They return
+an error if it isn't set.
 
 Snowflake state is process-wide (lock-free atomic), so every connection shares
 one sequence per machine id. Monotonic ULID state is per thread. Note that
@@ -254,7 +334,14 @@ UUIDV7.GENERATE            -> "0199..."          UUIDV7.TIME <uuid>     -> ms
 UUIDV7.MONOTONIC           -> "0199..."          UUIDV4.GENERATE        -> "3f2c..."
 SNOWFLAKE.GENERATE         -> (integer)          SNOWFLAKE.PARSE <id>   -> [ms, machine, seq]
 NANOID.GENERATE [size [alphabet]]
+RELID.GENERATE key [salt]  -> "5731MX-01J..."    RELID.TIME <id>        -> ms
+RELID.MONOTONIC key [salt] -> "5731MX-01J..."    RELID.TAG key [salt]   -> "5731MX"
 ```
+
+The `RELID.*` commands read their secret from the `IDGENKIT_RELID_SECRET`
+environment variable of `redis-server` when the module loads. Module arguments
+would show in `MODULE LIST`. Without the variable, the module still loads and
+the `RELID.*` commands return an error.
 
 The module is built against a minimal hand-written module API header
 (`redismodule_min.h`), so no Redis source is needed.
@@ -268,13 +355,13 @@ report is in `bench/results/`; regenerate it with `make bench`.
 
 <!-- bench-table libraries -->
 
-|  | ULID | ULID monotonic | ULID parse | UUIDv4 | UUIDv7 | UUIDv7 monotonic | Snowflake | Nano ID (21) |
-|---|---|---|---|---|---|---|---|---|
-| C core | 60 | 18 | 15 | 78 | 67 | 21 | 244 | 138 |
-| Rust | 75 | 33 | 8 | 75 | 73 | 33 | 244 | 132 |
-| Go | 124 | 48 | 16 | 258 | 121 | 51 | 244 | 297 |
-| Java 24 | 256 | 29 | 36 | 149 | 284 | 28 | 244 | 254 |
-| Python 3.12 | 1,333 | 422 | 2,468 | 1,896 | 1,766 | 868 | 411 | 1,279 |
+|  | ULID | ULID monotonic | ULID parse | UUIDv4 | UUIDv7 | UUIDv7 monotonic | Relative ID | Snowflake | Nano ID (21) |
+|---|---|---|---|---|---|---|---|---|---|
+| C core | 49 | 16 | 12 | 61 | 49 | 16 | 396 | 243 | 110 |
+| Rust | 70 | 27 | 7 | 63 | 59 | 27 | 536 | 244 | 107 |
+| Go | 99 | 37 | 12 | 203 | 96 | 40 | 241 | 244 | 234 |
+| Java 24 | 202 | 22 | 27 | 109 | 208 | 22 | 343 | 244 | 196 |
+| Python 3.12 | 1,072 | 351 | 1,985 | 1,552 | 1,481 | 688 | 2,600 | 335 | 1,041 |
 
 Source: [`bench/results/2026-09-25-darwin-arm64.txt`](https://github.com/rahulbsw/idgenkit/blob/main/bench/results/2026-09-25-darwin-arm64.txt), generated by `bench/doc_tables.py`.
 
@@ -284,11 +371,11 @@ Source: [`bench/results/2026-09-25-darwin-arm64.txt`](https://github.com/rahulbs
 
 <!-- bench-table databases -->
 
-|  | ULID | ULID monotonic | ULID as `uuid` | UUIDv7 | UUIDv7 monotonic | Snowflake | Nano ID | Built-in reference |
-|---|---|---|---|---|---|---|---|---|
-| PostgreSQL 17 (ns per row) | 86 | 45 | 64 | 72 | 37 | 200 | 115 | `gen_random_uuid()` 580 |
-| MySQL 9.2 (ns per call) | 104 | 74 | — | 118 | 64 | 279 | 182 | `UUID()` 67 |
-| Redis 8.4 (requests/s) | 602k | 542k | — | 554k | 573k | 571k | 552k | `PING` 595k |
+|  | ULID | ULID monotonic | ULID as `uuid` | UUIDv7 | UUIDv7 monotonic | Relative ID | Snowflake | Nano ID | Built-in reference |
+|---|---|---|---|---|---|---|---|---|---|
+| PostgreSQL 17 (ns per row) | 70 | 39 | 54 | 56 | 28 | 820 | 208 | 93 | `gen_random_uuid()` 501 |
+| MySQL 9.2 (ns per call) | 86 | 56 | — | 98 | 53 | 464 | 275 | 149 | `UUID()` 56 |
+| Redis 8.4 (requests/s) | 746k | 763k | — | 781k | 760k | 565k | 778k | 733k | `PING` 709k |
 
 Source: [`bench/results/2026-09-25-darwin-arm64.txt`](https://github.com/rahulbsw/idgenkit/blob/main/bench/results/2026-09-25-darwin-arm64.txt), generated by `bench/doc_tables.py`.
 
@@ -339,6 +426,10 @@ How to read these:
   them with an explicit error. Set a recent custom epoch (for example
   `1288834974657`, Twitter's) for new systems. IDs remain unique across clock
   regressions because the generator keeps issuing from its last timestamp.
+- **Relative ID:** idgenkit's own format, specified in
+  [docs/ALGORITHMS.md](docs/ALGORITHMS.md#relative-id). The time and random
+  parts use the ULID alphabet and rules. Every implementation produces the same
+  tags for the same secret, salt and key (checked against `testdata/relid_tag.txt`).
 - **Nano ID:** the same alphabet, default size and rejection-masking algorithm
   as the reference implementation, and byte-for-byte identical output for a
   given random stream (verified against `testdata/nanoid.txt`). The only change
@@ -393,3 +484,12 @@ One-time setup (GitHub → Settings → Environments and Secrets):
   and UUIDv7s from one generator are predictable from each other within a
   millisecond. Use Nano ID (≥ 21 characters) or UUIDv4 when an ID must be hard
   to guess.
+- Relative IDs reveal their creation time and which IDs belong to the same key.
+  Their tag hides the key only as long as the secret stays secret, and with
+  30 bits it's a grouping hint, not an authenticator: never use a relative ID
+  to authorize access. Relative ID secrets are never hardcoded. Libraries take
+  them as a constructor argument, PostgreSQL as a superuser-only setting, and
+  MySQL and Redis from the server's environment. The test and benchmark scripts
+  use labelled, test-only values. HMAC-SHA-256 comes from the standard library
+  in Go, Java and Python. C and Rust have their own small SHA-256, checked
+  against the RFC 4231 HMAC vectors.

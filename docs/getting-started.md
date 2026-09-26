@@ -1,9 +1,12 @@
 # Getting started
 
-Each library has the same four parts: ULID (with a monotonic generator),
+Each library has the same five parts: ULID (with a monotonic generator),
 UUIDv4 and UUIDv7 (with a monotonic v7 generator and a strict parser),
-Snowflake (with compose and parse), and Nano ID (with custom alphabets).
-Java and Python return their standard `UUID` types.
+relative IDs (keyed by a secret, with a monotonic mode), Snowflake (with
+compose and parse), and Nano ID (with custom alphabets). Java and Python return
+their standard `UUID` types. The [README](https://github.com/rahulbsw/idgenkit#relative-ids)
+shows the relative ID API for each language and database, and how each one
+loads its secret.
 
 ## Python
 
