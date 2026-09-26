@@ -47,6 +47,21 @@ int main(void) {
     BENCH("uuid.v4", n, { uid_uuidv4(&uu); sink += uu.b[15]; });
     BENCH("uuid.v7", n, { uid_uuidv7(&uu); sink += uu.b[15]; });
     BENCH("uuid.v7.monotonic", n, { uid_uuidv7_monotonic_next(&uuid_mono, &uu); sink += uu.b[15]; });
+    uid_relid rid;
+    uid_relid_monotonic relid_mono = {0};
+    uid_relid_ctx relid_ctx;
+    uid_relid_ctx_init(&relid_ctx, (const uint8_t *)"bench-only-secret-0123456789", 28, "orders", 6);
+    BENCH("relid.generate", n, {
+        uid_relid_new(&relid_ctx, "customer-42", 11, &rid);
+        uid_relid_encode(&rid, text);
+        sink += text[27];
+    });
+    BENCH("relid.monotonic", n, {
+        uid_relid_monotonic_next(&relid_mono, &relid_ctx, "customer-42", 11, &rid);
+        uid_relid_encode(&rid, text);
+        sink += text[27];
+    });
+    BENCH("relid.tag", n, { sink += uid_relid_tag(&relid_ctx, "customer-42", 11); });
     BENCH("snowflake.next", n, { uid_snowflake_next(&sf_state, 1, 0, &id); sink += id; });
     BENCH("nanoid(21)", n, { uid_nanoid(text, 21, uid_nanoid_url_alphabet, 64); sink += text[0]; });
     BENCH("nanoid.custom(hex,21)", n, { uid_nanoid(text, 21, "0123456789abcdef", 16); sink += text[0]; });

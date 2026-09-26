@@ -90,6 +90,62 @@ Both follow [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562).
   - If the increment would pass 2⁷⁴−1, return an overflow error and leave the
     state unchanged.
 
+## Relative ID
+
+A relative ID is sortable and unique, and every ID generated for the same
+caller-supplied key (a customer, tenant or device id) starts with the same tag:
+
+```
+3F8KQZ-01J8Y4Q9M3-X3B0N6E3P8
+|----| |--------| |--------|
+ tag    48-bit ms  50-bit random / counter
+```
+
+- **Value:** a 128-bit unsigned integer `tag << 98 | ms << 50 | rand`, with a
+  30-bit tag, a 48-bit Unix time in ms and 50 random bits. Sorting by value
+  (or by text) sorts by tag, then time, then `rand`.
+- **Tag:** `tag = BE32(HMAC-SHA-256(secret, input)[0..4]) >> 2`, the top 30 bits
+  of the MAC, where `input = BE32(len(salt)) ‖ salt ‖ key`. `salt` and `key`
+  are UTF-8 bytes and `BE32` is a 4-byte big-endian integer. The length prefix
+  keeps salt `ab` with key `c` apart from salt `a` with key `bc`.
+  - The **secret** must be at least 16 bytes. It is what stops anyone from
+    computing the tag of a guessed key; it must come from configuration or a
+    key store, never from source code.
+  - The **salt** is optional (empty by default) and not secret. Generators
+    with different salts give the same key unrelated tags, which separates
+    contexts (for example `orders` and `invoices`) under one secret.
+  - Two keys share a tag with probability 2⁻³⁰; there is a 50% chance that
+    some pair among about 38,600 keys does. A shared tag only mixes those keys'
+    IDs in a prefix scan; it never makes two IDs equal.
+- **Text form:** 28 characters, three fields of Crockford base32 (the ULID
+  alphabet) joined by `-`: the tag in 6 characters, the time in 10 and `rand`
+  in 10, each field most significant symbol first. The time field has 2
+  leading zero bits, so its first character is `0`–`7`. Every ID with a given
+  tag starts with the tag's 6 characters followed by `-`, so
+  `id >= 'TAG6CH-' AND id < 'TAG6CH.'` (or `LIKE 'TAG6CH-%'`) selects them.
+- **Decoding:**
+  - Case-insensitive, with the same character rules as ULID (no aliases).
+  - Either the 28-character form with `-` at offsets 6 and 17, or the same 26
+    characters without hyphens. Anything else is rejected.
+  - A first time character above `7` is rejected as an overflow.
+- **Randomness:** `rand` is 7 bytes from the OS CSPRNG, read big-endian and
+  masked to 50 bits.
+- **Timestamp range:** 0 to 2⁴⁸−1 ms, as for ULID.
+- **Monotonic generation:** one `(last_ms, last_rand)` state per generator,
+  shared by every key, following the ULID rules with a 50-bit counter:
+  - If `now > last_ms`, draw fresh randomness and store `(now, rand)`.
+  - Otherwise, set `last_rand += 1` and keep `last_ms`.
+  - If the increment would pass 2⁵⁰−1, return an overflow error and leave the
+    state unchanged.
+
+  Because `(ms, rand)` never repeats within a generator, its IDs are unique
+  even when two keys share a tag, and each key's IDs strictly increase.
+  Consecutive `rand` values do reveal that two IDs came from the same
+  generator in the same millisecond.
+- **Not a secret token:** 50 random bits are enough to avoid collisions
+  between generators (a 50% chance needs about 40 million IDs for one tag in
+  one millisecond), not to resist guessing.
+
 ## Snowflake
 
 ```

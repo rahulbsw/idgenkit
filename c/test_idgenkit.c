@@ -450,6 +450,210 @@ static void test_nanoid_misc(void) {
         CHECK(counts[i] > 9500 && counts[i] < 10500, "skewed symbol %c: %d", 'a' + i, counts[i]);
 }
 
+/* Decodes hex into a malloc'd buffer; "-" is empty. */
+static uint8_t *hex_alloc(const char *hex, size_t *n) {
+    size_t len = strcmp(hex, "-") == 0 ? 0 : strlen(hex) / 2;
+    uint8_t *out = malloc(len + 1);
+    hex_decode(hex, out, len);
+    *n = len;
+    return out;
+}
+
+static void test_hmac_sha256_vectors(void) {
+    FILE *f = open_vectors("hmac_sha256.txt");
+    static char line[8192], key_hex[1024], msg_hex[4096], want[65];
+    int rows = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#')
+            continue;
+        if (sscanf(line, "%1023s %4095s %64s", key_hex, msg_hex, want) != 3) {
+            CHECK(0, "bad hmac line: %.60s", line);
+            continue;
+        }
+        size_t klen, mlen;
+        uint8_t *key = hex_alloc(key_hex, &klen), *msg = hex_alloc(msg_hex, &mlen), mac[32];
+        char got[65];
+        uid_hmac_sha256(key, klen, msg, mlen, mac);
+        for (int i = 0; i < 32; i++)
+            snprintf(got + 2 * i, 3, "%02x", mac[i]);
+        CHECK(strcmp(got, want) == 0, "hmac key %zu msg %zu bytes: got %s want %s", klen, mlen, got,
+              want);
+        free(key);
+        free(msg);
+        rows++;
+    }
+    fclose(f);
+    CHECK(rows > 20, "too few hmac vectors");
+}
+
+static void test_relid_tag_vectors(void) {
+    FILE *f = open_vectors("relid_tag.txt");
+    char line[1024], secret_hex[256], salt_hex[256], key_hex[512], want_text[8];
+    unsigned long want;
+    int rows = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#')
+            continue;
+        if (sscanf(line, "%255s %255s %511s %lu %7s", secret_hex, salt_hex, key_hex, &want,
+                   want_text) != 5) {
+            CHECK(0, "bad relid_tag line: %s", line);
+            continue;
+        }
+        size_t slen, saltlen, klen;
+        uint8_t *secret = hex_alloc(secret_hex, &slen), *salt = hex_alloc(salt_hex, &saltlen),
+                *key = hex_alloc(key_hex, &klen);
+        uid_relid_ctx ctx;
+        char text[UID_RELID_TAG_LEN + 1] = {0};
+        CHECK(uid_relid_ctx_init(&ctx, secret, slen, (char *)salt, saltlen) == UID_OK, "init");
+        uint32_t tag = uid_relid_tag(&ctx, (char *)key, klen);
+        uid_relid_tag_encode(tag, text);
+        CHECK(tag == want && strcmp(text, want_text) == 0, "tag got %u %s want %lu %s", tag, text,
+              want, want_text);
+        uid_relid_ctx_wipe(&ctx);
+        free(secret);
+        free(salt);
+        free(key);
+        rows++;
+    }
+    fclose(f);
+    CHECK(rows > 10, "too few relid_tag vectors");
+
+    uid_relid_ctx ctx;
+    CHECK(uid_relid_ctx_init(&ctx, (const uint8_t *)"0123456789abcde", 15, "", 0) == UID_ERR_INVALID,
+          "short secret accepted");
+}
+
+static void test_relid_vectors(void) {
+    FILE *f = open_vectors("relid.txt");
+    char line[256], text[64], want[64];
+    unsigned long long tag, ms, rnd;
+    int rows = 0;
+    while (fgets(line, sizeof line, f)) {
+        uid_relid id, p;
+        if (line[0] == '#')
+            continue;
+        if (sscanf(line, "parts %llu %llu %llu %63s", &tag, &ms, &rnd, want) == 4) {
+            int rc = uid_relid_from_parts(&id, (uint32_t)tag, ms, rnd);
+            if (tag > UINT32_MAX || strcmp(want, "error") == 0) {
+                CHECK(rc == UID_ERR_RANGE, "expected a range error: %s", line);
+            } else {
+                char enc[UID_RELID_LEN + 1] = {0};
+                uid_relid_encode(&id, enc);
+                CHECK(rc == UID_OK && strcmp(enc, want) == 0, "got %s want %s", enc, want);
+                CHECK(uid_relid_decode(want, strlen(want), &p) == UID_OK && p.tag == tag &&
+                          p.timestamp_ms == ms && p.random == rnd,
+                      "decode %s", want);
+            }
+        } else if (sscanf(line, "parse %63s %llu %llu %llu", text, &tag, &ms, &rnd) == 4) {
+            CHECK(uid_relid_decode(text, strlen(text), &p) == UID_OK && p.tag == tag &&
+                      p.timestamp_ms == ms && p.random == rnd,
+                  "parse %s", text);
+        } else {
+            CHECK(0, "bad relid line: %s", line);
+            continue;
+        }
+        rows++;
+    }
+    fclose(f);
+    CHECK(rows > 10, "too few relid vectors");
+}
+
+static void test_relid_invalid(void) {
+    FILE *f = open_vectors("relid_invalid.txt");
+    char line[256];
+    int rows = 0;
+    while (fgets(line, sizeof line, f)) {
+        size_t len = strcspn(line, "\r\n");
+        uid_relid id;
+        if (line[0] == '#')
+            continue;
+        CHECK(len >= 2 && line[0] == '"' && line[len - 1] == '"', "unquoted line: %s", line);
+        CHECK(uid_relid_decode(line + 1, len - 2, &id) != UID_OK, "accepted %s", line);
+        rows++;
+    }
+    fclose(f);
+    CHECK(rows > 10, "too few relid_invalid vectors");
+}
+
+struct fixed_random7 {
+    uint8_t bytes[7];
+    int present, calls;
+};
+
+static int fixed_random7(void *ctx, uint8_t *buf, size_t n) {
+    struct fixed_random7 *r = ctx;
+    r->calls++;
+    if (!r->present || n != sizeof r->bytes)
+        return UID_ERR_RANDOM;
+    memcpy(buf, r->bytes, n);
+    return UID_OK;
+}
+
+static void test_relid_monotonic_vectors(void) {
+    FILE *f = open_vectors("relid_monotonic.txt");
+    char line[256], hex[32], want[32];
+    unsigned long long now;
+    unsigned long tag;
+    uid_relid_monotonic st = {0};
+    int rows = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#')
+            continue;
+        if (strncmp(line, "reset", 5) == 0) {
+            memset(&st, 0, sizeof st);
+            continue;
+        }
+        if (sscanf(line, "next %lu %llu %31s %31s", &tag, &now, hex, want) != 4) {
+            CHECK(0, "bad relid_monotonic line: %s", line);
+            continue;
+        }
+        struct fixed_random7 r = {{0}, strcmp(hex, "-") != 0, 0};
+        if (r.present)
+            hex_decode(hex, r.bytes, sizeof r.bytes);
+        uid_relid id;
+        int rc = uid_relid_monotonic_next_custom_random(&st, (uint32_t)tag, now, fixed_random7, &r,
+                                                        &id);
+        CHECK(r.present || r.calls == 0, "drew randomness at %llu", now);
+        if (strcmp(want, "error") == 0) {
+            CHECK(rc != UID_OK, "expected an error at %llu", now);
+        } else {
+            char enc[UID_RELID_LEN + 1] = {0};
+            uid_relid_encode(&id, enc);
+            CHECK(rc == UID_OK && strcmp(enc, want) == 0, "at %llu got %s (rc %d) want %s", now,
+                  enc, rc, want);
+        }
+        rows++;
+    }
+    fclose(f);
+    CHECK(rows > 10, "too few relid_monotonic vectors");
+}
+
+static void test_relid_generate(void) {
+    static const char secret[] = "test-only-secret-0123456789";
+    uid_relid_ctx ctx;
+    uid_relid a, b;
+    uid_relid_monotonic m = {0};
+    uint64_t now = uid_now_ms();
+    CHECK(uid_relid_ctx_init(&ctx, (const uint8_t *)secret, sizeof secret - 1, "orders", 6) == UID_OK,
+          "init");
+    uint32_t tag = uid_relid_tag(&ctx, "customer-42", 11);
+    CHECK(uid_relid_new(&ctx, "customer-42", 11, &a) == UID_OK &&
+              uid_relid_new(&ctx, "customer-42", 11, &b) == UID_OK,
+          "new");
+    CHECK(a.tag == tag && b.tag == tag && a.random != b.random, "new tag/random");
+    CHECK(a.timestamp_ms >= now && a.timestamp_ms < now + 5000, "new timestamp");
+    CHECK(uid_relid_monotonic_next(&m, &ctx, "customer-42", 11, &a) == UID_OK, "monotonic first");
+    for (int i = 0; i < 1000; i++) {
+        const char *key = i % 2 ? "customer-42" : "customer-7";
+        CHECK(uid_relid_monotonic_next(&m, &ctx, key, strlen(key), &b) == UID_OK &&
+                  (b.timestamp_ms > a.timestamp_ms ||
+                   (b.timestamp_ms == a.timestamp_ms && b.random > a.random)),
+              "monotonic order");
+        a = b;
+    }
+    uid_relid_ctx_wipe(&ctx);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1)
         testdata = argv[1];
@@ -461,6 +665,12 @@ int main(int argc, char **argv) {
     test_uuid_invalid();
     test_uuid_generate();
     test_uuidv7_monotonic_vectors();
+    test_hmac_sha256_vectors();
+    test_relid_tag_vectors();
+    test_relid_vectors();
+    test_relid_invalid();
+    test_relid_monotonic_vectors();
+    test_relid_generate();
     test_snowflake_vectors();
     test_snowflake_sequence_vectors();
     test_snowflake_concurrent();

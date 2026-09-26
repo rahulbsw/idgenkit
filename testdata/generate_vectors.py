@@ -6,6 +6,7 @@ Run from the repository root:  python3 testdata/generate_vectors.py
 """
 
 import hashlib
+import hmac
 import os
 import sys
 
@@ -336,6 +337,222 @@ def uuid7_monotonic_vectors() -> None:
     )
 
 
+def hmac_sha256_vectors() -> None:
+    # RFC 4231 test cases 1-4, 6 and 7 (case 5 is truncated), then lengths
+    # around the 64-byte block boundary for keys and messages.
+    rfc = [
+        (b"\x0b" * 20, b"Hi There"),
+        (b"Jefe", b"what do ya want for nothing?"),
+        (b"\xaa" * 20, b"\xdd" * 50),
+        (bytes(range(1, 26)), b"\xcd" * 50),
+        (b"\xaa" * 131, b"Test Using Larger Than Block-Size Key - Hash Key First"),
+        (
+            b"\xaa" * 131,
+            b"This is a test using a larger than block-size key and a larger than block-size data. "
+            b"The key needs to be hashed before being used by the HMAC algorithm.",
+        ),
+    ]
+    expected_rfc1 = "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+    cases = list(rfc)
+    for n in (0, 1, 55, 56, 63, 64, 65, 119, 120, 127, 128, 1000):
+        cases.append((stream(f"hmac-key{n % 3}", 32), stream(f"hmac-msg{n}", n)))
+    for n in (0, 16, 63, 64, 65, 200):
+        cases.append((stream(f"hmac-longkey{n}", n), b"abc"))
+    rows = []
+    for key, msg in cases:
+        rows.append((key.hex() or "-", msg.hex() or "-", hmac.new(key, msg, hashlib.sha256).hexdigest()))
+    assert rows[0][2] == expected_rfc1
+    write(
+        "hmac_sha256.txt",
+        "# HMAC-SHA-256 (RFC 2104 / FIPS 180-4), for implementations without one built in.\n"
+        "#   <key_hex> <message_hex> <mac_hex>      \"-\" stands for empty.\n",
+        rows,
+    )
+
+
+RELID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+RELID_MAX_TAG = (1 << 30) - 1
+RELID_MAX_TIME = (1 << 48) - 1
+RELID_MAX_RANDOM = (1 << 50) - 1
+
+
+def relid_field(value: int, width: int) -> str:
+    return "".join(RELID_ALPHABET[(value >> (5 * (width - 1 - i))) & 31] for i in range(width))
+
+
+def relid_text(tag: int, ms: int, rand: int) -> str:
+    return f"{relid_field(tag, 6)}-{relid_field(ms, 10)}-{relid_field(rand, 10)}"
+
+
+def relid_tag(secret: bytes, salt: bytes, key: bytes) -> int:
+    mac = hmac.new(secret, len(salt).to_bytes(4, "big") + salt + key, hashlib.sha256).digest()
+    return int.from_bytes(mac[:4], "big") >> 2
+
+
+def relid_tag_vectors() -> None:
+    s16 = b"0123456789abcdef"
+    s32 = stream("relid-secret", 32)
+    cases = [
+        (s16, b"", b""),
+        (s16, b"", b"customer-42"),
+        (s16, b"orders", b"customer-42"),
+        (s16, b"invoices", b"customer-42"),
+        # The length prefix keeps these two apart.
+        (s16, b"ab", b"c"),
+        (s16, b"a", b"bc"),
+        (s32, b"", b"DSABAAadaasdas"),
+        (s32, "t\u00e9nant".encode(), "cl\u00e9-\u65e5\u672c-\U0001f600".encode()),
+        (stream("relid-long-secret", 100), b"x", b"y"),
+    ]
+    for n in (55, 56, 60, 64, 119, 120, 200):
+        cases.append((s32, b"salt", "k".encode() * n))
+    rows = []
+    for secret, salt, key in cases:
+        tag = relid_tag(secret, salt, key)
+        rows.append((secret.hex(), salt.hex() or "-", key.hex() or "-", tag, relid_field(tag, 6)))
+    write(
+        "relid_tag.txt",
+        "# Relative ID tags (docs/ALGORITHMS.md). Salt and key are UTF-8; \"-\" stands for empty.\n"
+        "#   <secret_hex> <salt_hex> <key_hex> <tag> <tag_text>\n",
+        rows,
+    )
+
+
+def relid_vectors() -> None:
+    rows = []
+    cases = [
+        (0, 0, 0),
+        (RELID_MAX_TAG, RELID_MAX_TIME, RELID_MAX_RANDOM),
+        (1, 1469918176385, 1),
+        (1 << 29, 1 << 47, 1 << 49),
+    ]
+    for i in range(6):
+        r = int.from_bytes(stream(f"relid{i}", 16), "big")
+        cases.append((r >> 98, (r >> 50) & RELID_MAX_TIME, r & RELID_MAX_RANDOM))
+    for tag, ms, rand in cases:
+        rows.append(("parts", tag, ms, rand, relid_text(tag, ms, rand)))
+    for tag, ms, rand in (
+        (RELID_MAX_TAG + 1, 0, 0),
+        (0, RELID_MAX_TIME + 1, 0),
+        (0, 0, RELID_MAX_RANDOM + 1),
+    ):
+        rows.append(("parts", tag, ms, rand, "error"))
+    # Alternative spellings that parse to the same value.
+    tag, ms, rand = cases[4]
+    text = relid_text(tag, ms, rand)
+    for alt in (text.lower(), text.replace("-", ""), text.replace("-", "").lower()):
+        rows.append(("parse", alt, tag, ms, rand))
+    write(
+        "relid.txt",
+        "# Relative ID text form (docs/ALGORITHMS.md).\n"
+        "#   parts <tag> <timestamp_ms> <random> <expected>   expected is the text, or \"error\".\n"
+        "#   parse <text> <tag> <timestamp_ms> <random>       a non-canonical spelling that must parse.\n",
+        rows,
+    )
+
+
+def relid_invalid_vectors() -> None:
+    valid = relid_text(0x1234567, 1469918176385, 0x2ABCDEF012345)
+    bare = valid.replace("-", "")
+    cases = [
+        "",
+        valid[:-1],
+        valid + "0",
+        bare[:-1],
+        bare + "0",
+        valid[:6] + valid[7:],  # only one hyphen
+        valid[:6] + "_" + valid[7:],
+        valid[:17] + "_" + valid[18:],
+        valid[:5] + "-" + valid[5] + valid[7:],
+        valid[:6] + bare[6:16] + "-" + valid[18:] + "0",
+        valid[:7] + "8" + valid[8:],  # time overflows 48 bits
+        bare[:6] + "8" + bare[7:],
+        valid[:3] + "I" + valid[4:],
+        valid[:3] + "L" + valid[4:],
+        valid[:3] + "O" + valid[4:],
+        valid[:3] + "U" + valid[4:],
+        valid[:-1] + " ",
+        " " + valid[1:],
+        valid[:10] + "\u00e9" + valid[11:],
+    ]
+    with open(os.path.join(HERE, "relid_invalid.txt"), "w", encoding="utf-8") as f:
+        f.write("# Strings every relative ID parser must reject, one per line between the quotes.\n")
+        for case in cases:
+            f.write(f'"{case}"\n')
+
+
+class MonotonicRelidModel:
+    def __init__(self) -> None:
+        self.last_ms = None
+        self.last_rand = 0
+
+    def draws_random(self, now: int) -> bool:
+        return self.last_ms is None or now > self.last_ms
+
+    def next(self, tag: int, now: int, random7: bytes):
+        """Returns the next ID text, or None for an error (state unchanged)."""
+        if not self.draws_random(now):
+            if self.last_rand == RELID_MAX_RANDOM:
+                return None
+            self.last_rand += 1
+        else:
+            if now > RELID_MAX_TIME:
+                return None
+            self.last_ms, self.last_rand = now, int.from_bytes(random7, "big") & RELID_MAX_RANDOM
+        return relid_text(tag, self.last_ms, self.last_rand)
+
+
+def relid_monotonic_vectors() -> None:
+    t = 1469918176385
+    a, b = 0x0ABCDEF, 0x3FFFFFF
+    # ("reset",) or (tag, now_ms, random7 or None); None draws from the fixed stream.
+    cases = [
+        ("reset",),
+        (a, t, bytes.fromhex("ff123456789abc")),  # the top 6 bits are masked off
+        (a, t, None),  # same millisecond: previous + 1
+        (b, t, None),  # another key shares the counter
+        (a, t - 5, None),  # clock moved backwards: keep the last timestamp
+        (b, t + 1, None),  # new millisecond: fresh randomness
+        ("reset",),
+        (a, 2000, bytes.fromhex("03fffffffffffe")),
+        (b, 2000, None),  # reaches the maximum
+        (a, 2000, None),  # overflow
+        (a, 1999, None),  # still overflowing, clock behind
+        (a, 2001, None),  # recovers in the next millisecond
+        ("reset",),
+        (a, RELID_MAX_TIME + 1, bytes(7)),  # beyond 48 bits
+        (a, RELID_MAX_TIME, None),  # the failed call left no state behind
+        (b, RELID_MAX_TIME, None),
+        (a, RELID_MAX_TIME + 1, None),  # beyond 48 bits after a valid ID
+        (a, RELID_MAX_TIME, None),  # continues from the last valid ID
+    ]
+    rows, model, draw = [], MonotonicRelidModel(), 0
+    for case in cases:
+        if case[0] == "reset":
+            rows.append(("reset",))
+            model = MonotonicRelidModel()
+            continue
+        tag, now, random7 = case
+        if model.draws_random(now):
+            if random7 is None:
+                random7 = stream(f"relid-monotonic{draw}", 7)
+                draw += 1
+            random_hex = random7.hex()
+        else:
+            random7, random_hex = bytes(7), "-"
+        value = model.next(tag, now, random7)
+        rows.append(("next", tag, now, random_hex, "error" if value is None else value))
+    write(
+        "relid_monotonic.txt",
+        "# Monotonic relative ID generator behaviour. \"reset\" starts a new generator.\n"
+        "#   next <tag> <now_ms> <random_hex> <expected>\n"
+        "# random_hex: the 7 bytes the random source returns if the call draws randomness,\n"
+        "#             or \"-\" if the call must not draw any.\n"
+        "# expected:   the ID text, or \"error\" (the call fails and the generator is unchanged).\n",
+        rows,
+    )
+
+
 SF_MAX_SEQUENCE = 4095
 SF_MAX_DELTA = (1 << 42) - 1
 
@@ -428,3 +645,8 @@ if __name__ == "__main__":
     uuid_vectors()
     uuid_invalid_vectors()
     uuid7_monotonic_vectors()
+    hmac_sha256_vectors()
+    relid_tag_vectors()
+    relid_vectors()
+    relid_invalid_vectors()
+    relid_monotonic_vectors()

@@ -354,6 +354,263 @@ int uid_uuid_decode(const char *text, size_t len, uid_uuid *out) {
     return UID_OK;
 }
 
+/* ---- SHA-256 (FIPS 180-4) and HMAC (RFC 2104) ----------------------------- */
+
+static const uint32_t SHA256_K[64] = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+};
+
+#define ROTR32(x, n) ((x) >> (n) | (x) << (32 - (n)))
+
+static void sha256_block(uint32_t h[8], const uint8_t p[64]) {
+    uint32_t w[64], a, b, c, d, e, f, g, hh;
+    for (int i = 0; i < 16; i++)
+        w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 |
+               (uint32_t)p[4 * i + 2] << 8 | p[4 * i + 3];
+    for (int i = 16; i < 64; i++) {
+        uint32_t s0 = ROTR32(w[i - 15], 7) ^ ROTR32(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        uint32_t s1 = ROTR32(w[i - 2], 17) ^ ROTR32(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+    for (int i = 0; i < 64; i++) {
+        uint32_t t1 = hh + (ROTR32(e, 6) ^ ROTR32(e, 11) ^ ROTR32(e, 25)) + ((e & f) ^ (~e & g)) +
+                      SHA256_K[i] + w[i];
+        uint32_t t2 = (ROTR32(a, 2) ^ ROTR32(a, 13) ^ ROTR32(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+        hh = g, g = f, f = e, e = d + t1, d = c, c = b, b = a, a = t1 + t2;
+    }
+    h[0] += a, h[1] += b, h[2] += c, h[3] += d, h[4] += e, h[5] += f, h[6] += g, h[7] += hh;
+}
+
+static void sha256_init(uid_sha256 *s) {
+    static const uint32_t iv[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                                   0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    memcpy(s->h, iv, sizeof iv);
+    s->total = 0;
+    s->used = 0;
+}
+
+static void sha256_update(uid_sha256 *s, const uint8_t *p, size_t n) {
+    s->total += n;
+    if (s->used > 0) {
+        size_t take = 64 - s->used < n ? 64 - s->used : n;
+        memcpy(s->buf + s->used, p, take);
+        s->used += take;
+        p += take;
+        n -= take;
+        if (s->used < 64)
+            return;
+        sha256_block(s->h, s->buf);
+        s->used = 0;
+    }
+    for (; n >= 64; p += 64, n -= 64)
+        sha256_block(s->h, p);
+    memcpy(s->buf, p, n);
+    s->used = n;
+}
+
+static void sha256_final(uid_sha256 *s, uint8_t out[32]) {
+    uint64_t bits = s->total * 8;
+    uint8_t pad[72] = {0x80};
+    size_t padlen = (s->used < 56 ? 56 : 120) - s->used;
+    for (int i = 0; i < 8; i++)
+        pad[padlen + i] = (uint8_t)(bits >> (56 - 8 * i));
+    sha256_update(s, pad, padlen + 8);
+    for (int i = 0; i < 8; i++) {
+        out[4 * i] = (uint8_t)(s->h[i] >> 24);
+        out[4 * i + 1] = (uint8_t)(s->h[i] >> 16);
+        out[4 * i + 2] = (uint8_t)(s->h[i] >> 8);
+        out[4 * i + 3] = (uint8_t)s->h[i];
+    }
+}
+
+static void wipe(void *p, size_t n) {
+    volatile uint8_t *v = p;
+    while (n--)
+        *v++ = 0;
+}
+
+static void hmac_sha256_init(uid_sha256 *inner, uid_sha256 *outer, const uint8_t *key,
+                             size_t key_len) {
+    uint8_t block[64] = {0};
+    if (key_len > 64) {
+        uid_sha256 s;
+        sha256_init(&s);
+        sha256_update(&s, key, key_len);
+        sha256_final(&s, block);
+        wipe(&s, sizeof s);
+    } else if (key_len > 0) {
+        memcpy(block, key, key_len);
+    }
+    for (int i = 0; i < 64; i++)
+        block[i] ^= 0x36;
+    sha256_init(inner);
+    sha256_update(inner, block, 64);
+    for (int i = 0; i < 64; i++)
+        block[i] ^= 0x36 ^ 0x5c;
+    sha256_init(outer);
+    sha256_update(outer, block, 64);
+    wipe(block, sizeof block);
+}
+
+/* Consumes copies of the prepared states; the caller's stay reusable. */
+static void hmac_sha256_finish(uid_sha256 inner, uid_sha256 outer, const uint8_t *msg,
+                               size_t msg_len, uint8_t out[32]) {
+    uint8_t digest[32];
+    sha256_update(&inner, msg, msg_len);
+    sha256_final(&inner, digest);
+    sha256_update(&outer, digest, sizeof digest);
+    sha256_final(&outer, out);
+}
+
+void uid_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg, size_t msg_len,
+                     uint8_t out[32]) {
+    uid_sha256 inner, outer;
+    hmac_sha256_init(&inner, &outer, key, key_len);
+    hmac_sha256_finish(inner, outer, msg, msg_len, out);
+    wipe(&inner, sizeof inner);
+    wipe(&outer, sizeof outer);
+}
+
+/* ---- Relative ID ----------------------------------------------------------- */
+
+int uid_relid_ctx_init(uid_relid_ctx *ctx, const uint8_t *secret, size_t secret_len,
+                       const char *salt, size_t salt_len) {
+    uint8_t prefix[4];
+    if (secret_len < UID_RELID_MIN_SECRET || (uint64_t)salt_len > UINT32_MAX)
+        return UID_ERR_INVALID;
+    hmac_sha256_init(&ctx->inner, &ctx->outer, secret, secret_len);
+    for (int i = 0; i < 4; i++)
+        prefix[i] = (uint8_t)((uint64_t)salt_len >> (24 - 8 * i));
+    sha256_update(&ctx->inner, prefix, 4);
+    sha256_update(&ctx->inner, (const uint8_t *)salt, salt_len);
+    return UID_OK;
+}
+
+void uid_relid_ctx_wipe(uid_relid_ctx *ctx) {
+    wipe(ctx, sizeof *ctx);
+}
+
+uint32_t uid_relid_tag(const uid_relid_ctx *ctx, const char *key, size_t key_len) {
+    uint8_t mac[32];
+    hmac_sha256_finish(ctx->inner, ctx->outer, (const uint8_t *)key, key_len, mac);
+    return ((uint32_t)mac[0] << 24 | (uint32_t)mac[1] << 16 | (uint32_t)mac[2] << 8 | mac[3]) >> 2;
+}
+
+int uid_relid_from_parts(uid_relid *out, uint32_t tag, uint64_t timestamp_ms, uint64_t random) {
+    if (tag > UID_RELID_MAX_TAG || timestamp_ms > UID_RELID_MAX_TIME ||
+        random > UID_RELID_MAX_RANDOM)
+        return UID_ERR_RANGE;
+    out->tag = tag;
+    out->timestamp_ms = timestamp_ms;
+    out->random = random;
+    return UID_OK;
+}
+
+static int relid_random(uid_random_fn random, void *rctx, uint64_t *out) {
+    uint8_t buf[7];
+    uint64_t v = 0;
+    int rc = random(rctx, buf, sizeof buf);
+    if (rc != UID_OK)
+        return rc;
+    for (int i = 0; i < 7; i++)
+        v = v << 8 | buf[i];
+    *out = v & UID_RELID_MAX_RANDOM;
+    return UID_OK;
+}
+
+int uid_relid_new(const uid_relid_ctx *ctx, const char *key, size_t key_len, uid_relid *out) {
+    uint64_t now = uid_now_ms(), rand;
+    int rc;
+    if (now > UID_RELID_MAX_TIME)
+        return UID_ERR_RANGE;
+    rc = relid_random(os_random, NULL, &rand);
+    if (rc != UID_OK)
+        return rc;
+    return uid_relid_from_parts(out, uid_relid_tag(ctx, key, key_len), now, rand);
+}
+
+int uid_relid_monotonic_next_custom_random(uid_relid_monotonic *st, uint32_t tag,
+                                           uint64_t now_ms, uid_random_fn random, void *rctx,
+                                           uid_relid *out) {
+    uint64_t rand;
+    int rc;
+    if (tag > UID_RELID_MAX_TAG)
+        return UID_ERR_RANGE;
+    if (st->primed && now_ms <= st->last_ms) {
+        if (st->last_rand == UID_RELID_MAX_RANDOM)
+            return UID_ERR_OVERFLOW;
+        st->last_rand++;
+    } else {
+        if (now_ms > UID_RELID_MAX_TIME)
+            return UID_ERR_RANGE;
+        rc = relid_random(random, rctx, &rand);
+        if (rc != UID_OK)
+            return rc;
+        st->last_ms = now_ms;
+        st->last_rand = rand;
+        st->primed = 1;
+    }
+    return uid_relid_from_parts(out, tag, st->last_ms, st->last_rand);
+}
+
+int uid_relid_monotonic_next(uid_relid_monotonic *st, const uid_relid_ctx *ctx, const char *key,
+                             size_t key_len, uid_relid *out) {
+    return uid_relid_monotonic_next_custom_random(st, uid_relid_tag(ctx, key, key_len),
+                                                  uid_now_ms(), os_random, NULL, out);
+}
+
+static void relid_put(char *out, uint64_t v, int width) {
+    for (int i = width - 1; i >= 0; i--, v >>= 5)
+        out[i] = ULID_ALPHABET[v & 31];
+}
+
+void uid_relid_tag_encode(uint32_t tag, char out[UID_RELID_TAG_LEN]) {
+    relid_put(out, tag, 6);
+}
+
+void uid_relid_encode(const uid_relid *id, char out[UID_RELID_LEN]) {
+    relid_put(out, id->tag, 6);
+    out[6] = '-';
+    relid_put(out + 7, id->timestamp_ms, 10);
+    out[17] = '-';
+    relid_put(out + 18, id->random, 10);
+}
+
+static int relid_get(const char *text, int width, uint64_t *out) {
+    uint64_t v = 0;
+    for (int i = 0; i < width; i++) {
+        int8_t d = ulid_decode_char((unsigned char)text[i]);
+        if (d < 0)
+            return UID_ERR_INVALID;
+        v = v << 5 | (uint64_t)d;
+    }
+    *out = v;
+    return UID_OK;
+}
+
+int uid_relid_decode(const char *text, size_t len, uid_relid *out) {
+    uint64_t tag, ms, rand;
+    int sep;
+    if (len == UID_RELID_LEN && text[6] == '-' && text[17] == '-')
+        sep = 1;
+    else if (len == UID_RELID_LEN - 2)
+        sep = 0;
+    else
+        return UID_ERR_INVALID;
+    if (relid_get(text, 6, &tag) != UID_OK || relid_get(text + 6 + sep, 10, &ms) != UID_OK ||
+        relid_get(text + 16 + 2 * sep, 10, &rand) != UID_OK || ms > UID_RELID_MAX_TIME)
+        return UID_ERR_INVALID;
+    return uid_relid_from_parts(out, (uint32_t)tag, ms, rand);
+}
+
 /* ---- Snowflake ------------------------------------------------------------ */
 
 #define SF_SEQ_BITS 12

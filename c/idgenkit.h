@@ -1,5 +1,6 @@
 /*
- * idgenkit: dependency-free ULID, UUIDv4/v7, Snowflake and Nano ID core in C99.
+ * idgenkit: dependency-free ULID, UUIDv4/v7, relative ID, Snowflake and Nano ID
+ * core in C99.
  *
  * Shared by the PostgreSQL, MySQL and Redis extensions. Requires a POSIX
  * system (Linux, macOS, *BSD) and a GCC/Clang compatible compiler (for the
@@ -26,7 +27,7 @@ enum {
     UID_OK = 0,
     UID_ERR_RANDOM = -1,   /* OS random source failed */
     UID_ERR_RANGE = -2,    /* timestamp/argument outside the representable range */
-    UID_ERR_OVERFLOW = -3, /* monotonic ULID/UUIDv7 random component exhausted */
+    UID_ERR_OVERFLOW = -3, /* monotonic random component exhausted */
     UID_ERR_INVALID = -4   /* malformed input */
 };
 
@@ -99,6 +100,64 @@ int uid_uuidv7_timestamp(const uid_uuid *u, uint64_t *timestamp_ms);
 void uid_uuid_encode(const uid_uuid *u, char out[UID_UUID_LEN]);
 /* Case-insensitive; accepts only the 36-character hyphenated form. */
 int uid_uuid_decode(const char *text, size_t len, uid_uuid *out);
+
+/* ---- Relative ID (30-bit keyed tag | 48-bit ms | 50-bit random) ---------- */
+
+#define UID_RELID_LEN 28
+#define UID_RELID_TAG_LEN 6
+#define UID_RELID_MIN_SECRET 16
+#define UID_RELID_MAX_TAG ((UINT32_C(1) << 30) - 1)
+#define UID_RELID_MAX_TIME ((UINT64_C(1) << 48) - 1)
+#define UID_RELID_MAX_RANDOM ((UINT64_C(1) << 50) - 1)
+
+typedef struct {
+    uint32_t tag;
+    uint64_t timestamp_ms;
+    uint64_t random;
+} uid_relid;
+
+typedef struct {
+    uint32_t h[8];
+    uint64_t total;
+    uint8_t buf[64];
+    size_t used;
+} uid_sha256;
+
+/* HMAC-SHA-256 keyed with the secret, with BE32(len(salt)) || salt already
+ * absorbed. Holds secret-equivalent material: wipe it when done. */
+typedef struct {
+    uid_sha256 inner, outer;
+} uid_relid_ctx;
+
+/* Caller-owned monotonic state shared by every key; zero-initialise before
+ * first use. Not thread-safe: use one per thread/process, or guard it. */
+typedef struct {
+    uint64_t last_ms;
+    uint64_t last_rand;
+    int primed;
+} uid_relid_monotonic;
+
+void uid_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg, size_t msg_len,
+                     uint8_t out[32]);
+
+/* UID_ERR_INVALID if the secret is shorter than UID_RELID_MIN_SECRET bytes. */
+int uid_relid_ctx_init(uid_relid_ctx *ctx, const uint8_t *secret, size_t secret_len,
+                       const char *salt, size_t salt_len);
+void uid_relid_ctx_wipe(uid_relid_ctx *ctx);
+uint32_t uid_relid_tag(const uid_relid_ctx *ctx, const char *key, size_t key_len);
+int uid_relid_new(const uid_relid_ctx *ctx, const char *key, size_t key_len, uid_relid *out);
+int uid_relid_from_parts(uid_relid *out, uint32_t tag, uint64_t timestamp_ms, uint64_t random);
+int uid_relid_monotonic_next(uid_relid_monotonic *state, const uid_relid_ctx *ctx, const char *key,
+                             size_t key_len, uid_relid *out);
+int uid_relid_monotonic_next_custom_random(uid_relid_monotonic *state, uint32_t tag,
+                                           uint64_t now_ms, uid_random_fn random, void *rctx,
+                                           uid_relid *out);
+/* Writes exactly UID_RELID_LEN bytes (TTTTTT-MMMMMMMMMM-RRRRRRRRRR); no NUL. */
+void uid_relid_encode(const uid_relid *id, char out[UID_RELID_LEN]);
+/* Writes exactly UID_RELID_TAG_LEN bytes; no NUL. */
+void uid_relid_tag_encode(uint32_t tag, char out[UID_RELID_TAG_LEN]);
+/* Case-insensitive; accepts the 28-character form or 26 characters without hyphens. */
+int uid_relid_decode(const char *text, size_t len, uid_relid *out);
 
 /* ---- Snowflake (42-bit ms | 10-bit machine | 12-bit sequence) ------------ */
 
