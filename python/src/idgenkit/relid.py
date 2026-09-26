@@ -17,6 +17,8 @@ import threading
 import time
 from typing import Callable, NamedTuple
 
+from .ulid import _PAIRS, _decode_base32
+
 __all__ = [
     "MAX_RANDOM",
     "MAX_TAG",
@@ -29,12 +31,10 @@ __all__ = [
     "parse",
 ]
 
-ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 MAX_TAG = (1 << 30) - 1
 MAX_TIMESTAMP = (1 << 48) - 1
 MAX_RANDOM = (1 << 50) - 1
 MIN_SECRET_BYTES = 16
-_DECODE = {c: i for i, c in enumerate(ALPHABET)} | {c.lower(): i for i, c in enumerate(ALPHABET)}
 
 
 class RelativeIdParts(NamedTuple):
@@ -48,9 +48,6 @@ class RelativeIdParts(NamedTuple):
 
 
 # Every field is a multiple of 10 bits, so each is encoded two symbols at a time.
-_PAIRS = [a + b for a in ALPHABET for b in ALPHABET]
-
-
 def _text(tag: int, ms: int, r: int) -> str:
     p = _PAIRS
     return (
@@ -77,16 +74,6 @@ def _suffix(ms: int, r: int) -> str:
 
 def _tag_text(tag: int) -> str:
     return _PAIRS[tag >> 20] + _PAIRS[tag >> 10 & 1023] + _PAIRS[tag & 1023]
-
-
-def _decode_field(text: str) -> int:
-    value = 0
-    for c in text:
-        v = _DECODE.get(c)
-        if v is None:
-            raise ValueError(f"invalid relative ID character {c!r}")
-        value = value << 5 | v
-    return value
 
 
 def encode_tag(tag: int) -> str:
@@ -116,9 +103,10 @@ def parse(text: str) -> RelativeIdParts:
         tag, ms, rand = text[:6], text[6:16], text[16:]
     else:
         raise ValueError(f"relative ID must be 28 characters (or 26 without hyphens): {text!r}")
-    if _DECODE.get(ms[0], 8) > 7:
+    parts = RelativeIdParts(_decode_base32(tag), _decode_base32(ms), _decode_base32(rand))
+    if parts.timestamp_ms > MAX_TIMESTAMP:
         raise ValueError(f"invalid relative ID timestamp: {text!r}")
-    return RelativeIdParts(_decode_field(tag), _decode_field(ms), _decode_field(rand))
+    return parts
 
 
 def _now_ms() -> int:

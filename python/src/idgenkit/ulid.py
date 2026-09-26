@@ -10,7 +10,6 @@ Spec: https://github.com/ulid/spec
 
 from __future__ import annotations
 
-import base64
 import os
 import threading
 import time
@@ -26,33 +25,43 @@ _RANDOM_MAX = (1 << _RANDOM_BITS) - 1
 _MAX_INT = (1 << 128) - 1
 
 # ULID text is Crockford base32 over a 130-bit field (2 leading zero bits).
-# We let the C-implemented RFC 4648 base32 codec do the heavy lifting on a
-# 160-bit (20-byte, 32-char) buffer and translate the alphabets.
-_RFC4648 = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+# Encoding looks up 10 bits (two symbols) at a time. Decoding maps Crockford
+# onto the digits int() accepts in base 32, after rejecting everything else
+# (int() would also allow signs, underscores and whitespace).
 _CROCKFORD = CROCKFORD_ALPHABET.encode("ascii")
-_TO_CROCKFORD = bytes.maketrans(_RFC4648, _CROCKFORD)
-_FROM_CROCKFORD = bytes.maketrans(_CROCKFORD + _CROCKFORD.lower(), _RFC4648 * 2)
 _VALID_CHARS = _CROCKFORD + _CROCKFORD.lower()
-_ENCODE_PAD = 6  # 32 chars - 26 chars
+_TO_BASE32_DIGITS = bytes.maketrans(_VALID_CHARS, b"0123456789abcdefghijklmnopqrstuv" * 2)
+_PAIRS = [a + b for a in CROCKFORD_ALPHABET for b in CROCKFORD_ALPHABET]
+_MASK_40 = (1 << 40) - 1
 
 
 def _encode(value: int) -> str:
+    p = _PAIRS
+    t = value >> _RANDOM_BITS
+    a = value >> 40 & _MASK_40
+    b = value & _MASK_40
     return (
-        base64.b32encode(value.to_bytes(20, "big"))
-        .translate(_TO_CROCKFORD)[_ENCODE_PAD:]
-        .decode("ascii")
+        f"{p[t >> 40]}{p[t >> 30 & 1023]}{p[t >> 20 & 1023]}{p[t >> 10 & 1023]}{p[t & 1023]}"
+        f"{p[a >> 30]}{p[a >> 20 & 1023]}{p[a >> 10 & 1023]}{p[a & 1023]}"
+        f"{p[b >> 30]}{p[b >> 20 & 1023]}{p[b >> 10 & 1023]}{p[b & 1023]}"
     )
+
+
+def _decode_base32(text: str) -> int:
+    """Crockford base32 (either case) to int; ValueError for any other character."""
+    raw = text.encode("ascii", "replace")
+    if not raw or raw.translate(None, _VALID_CHARS):
+        raise ValueError(f"invalid Crockford base32 character in {text!r}")
+    return int(raw.translate(_TO_BASE32_DIGITS), 32)
 
 
 def _decode(text: str) -> int:
     if len(text) != 26:
         raise ValueError(f"ULID must be 26 characters, got {len(text)}")
-    raw = text.encode("ascii")
-    if raw.translate(None, _VALID_CHARS):
-        raise ValueError(f"invalid ULID character in {text!r}")
-    if raw[0] > ord("7"):
+    value = _decode_base32(text)
+    if value > _MAX_INT:
         raise ValueError(f"ULID overflows 128 bits: {text!r}")
-    return int.from_bytes(base64.b32decode(b"AAAAAA" + raw.translate(_FROM_CROCKFORD)), "big")
+    return value
 
 
 def _now_ms() -> int:

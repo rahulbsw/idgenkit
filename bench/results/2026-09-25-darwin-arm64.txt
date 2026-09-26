@@ -1,131 +1,131 @@
-# idgenkit benchmarks — 2026-09-26T01:32Z
+# idgenkit benchmarks — 2026-09-26T01:46Z
 # host: Darwin 25.6.0 arm64, cpus: 14
 # Snowflake is capped by design at 4096 ids/ms (>= 244 ns/op per generator).
 
 ## C core
 # C core, N=1000000
-c       ulid.new                           67.5 ns/op       14809111 ops/s
-c       ulid.new+encode                    69.7 ns/op       14357090 ops/s
-c       ulid.monotonic                     22.8 ns/op       43838499 ops/s
-c       ulid.decode                        17.9 ns/op       55931540 ops/s
-c       uuid.v4                            91.8 ns/op       10891704 ops/s
-c       uuid.v7                            73.2 ns/op       13664002 ops/s
-c       uuid.v7.monotonic                  23.3 ns/op       42968246 ops/s
-c       relid.generate                     68.1 ns/op       14682132 ops/s
-c       relid.monotonic                    23.9 ns/op       41911148 ops/s
-c       relid.tag                          10.1 ns/op       98726429 ops/s
-c       snowflake.next                    244.0 ns/op        4098713 ops/s
-c       nanoid(21)                        134.2 ns/op        7451010 ops/s
-c       nanoid.custom(hex,21)             119.1 ns/op        8397081 ops/s
+c       ulid.new                           81.3 ns/op       12304058 ops/s
+c       ulid.new+encode                    84.0 ns/op       11910859 ops/s
+c       ulid.monotonic                     24.5 ns/op       40814661 ops/s
+c       ulid.decode                        20.5 ns/op       48885413 ops/s
+c       uuid.v4                            91.3 ns/op       10956623 ops/s
+c       uuid.v7                            73.3 ns/op       13635682 ops/s
+c       uuid.v7.monotonic                  23.4 ns/op       42789902 ops/s
+c       relid.generate                     74.5 ns/op       13423900 ops/s
+c       relid.monotonic                    23.8 ns/op       42036235 ops/s
+c       relid.tag                           9.8 ns/op      101864113 ops/s
+c       snowflake.next                    243.5 ns/op        4106355 ops/s
+c       nanoid(21)                        132.2 ns/op        7565212 ops/s
+c       nanoid.custom(hex,21)             113.0 ns/op        8852770 ops/s
 
 ## Rust
 # Rust, N=1000000
-rust    ulid.new                           69.7 ns/op       14340121 ops/s
-rust    ulid.new.to_string                100.6 ns/op        9935473 ops/s
-rust    ulid.monotonic                     32.9 ns/op       30371481 ops/s
-rust    ulid.parse                          8.7 ns/op      115170885 ops/s
-rust    uuid.v4                            77.3 ns/op       12942380 ops/s
-rust    uuid.v7                            73.3 ns/op       13637046 ops/s
-rust    uuid.v7.monotonic                  33.0 ns/op       30318573 ops/s
-rust    relid.generate                    114.5 ns/op        8732878 ops/s
-rust    relid.monotonic                    77.1 ns/op       12967050 ops/s
-rust    snowflake.next_id                 244.0 ns/op        4098375 ops/s
-rust    nanoid(21)                        138.9 ns/op        7200493 ops/s
-rust    nanoid.custom(hex,21)             204.8 ns/op        4882566 ops/s
-rust    snowflake.next_id x8              286.8 ns/op        3486822 ops/s
-rust    ulid.new x8                       264.0 ns/op        3788075 ops/s
+rust    ulid.new                           65.0 ns/op       15385572 ops/s
+rust    ulid.new.to_string                 97.5 ns/op       10259299 ops/s
+rust    ulid.monotonic                     33.2 ns/op       30159203 ops/s
+rust    ulid.parse                          8.4 ns/op      118940247 ops/s
+rust    uuid.v4                            73.8 ns/op       13545998 ops/s
+rust    uuid.v7                            70.1 ns/op       14261054 ops/s
+rust    uuid.v7.monotonic                  33.0 ns/op       30326733 ops/s
+rust    relid.generate                    117.3 ns/op        8526573 ops/s
+rust    relid.monotonic                    78.8 ns/op       12687772 ops/s
+rust    snowflake.next_id                 244.0 ns/op        4098285 ops/s
+rust    nanoid(21)                        130.7 ns/op        7650851 ops/s
+rust    nanoid.custom(hex,21)             182.1 ns/op        5491894 ops/s
+rust    snowflake.next_id x8              276.6 ns/op        3615328 ops/s
+rust    ulid.new x8                       253.7 ns/op        3941865 ops/s
 
 ## Go
-go      nanoid.New                         284.8 ns/op        3511236 ops/s  48 B/op 2 allocs/op
-go      nanoid.CustomHex                   295.0 ns/op        3389831 ops/s  48 B/op 2 allocs/op
-go      nanoid.CustomAlnum                 342.5 ns/op        2919708 ops/s  72 B/op 2 allocs/op
-go      nanoid.NewParallel                 760.8 ns/op        1314406 ops/s  48 B/op 2 allocs/op
-go      relid.Generate                     155.9 ns/op        6414368 ops/s  32 B/op 1 allocs/op
-go      relid.Monotonic                     67.0 ns/op       14920919 ops/s  32 B/op 1 allocs/op
-go      snowflake.Next                     244.0 ns/op        4098361 ops/s  0 B/op 0 allocs/op
-go      snowflake.NextParallel             284.7 ns/op        3512469 ops/s  0 B/op 0 allocs/op
-go      ulid.New                           123.1 ns/op        8123477 ops/s  0 B/op 0 allocs/op
-go      ulid.NewString                     153.8 ns/op        6501951 ops/s  32 B/op 1 allocs/op
-go      ulid.Monotonic                      45.6 ns/op       21949078 ops/s  0 B/op 0 allocs/op
-go      ulid.Parse                          14.6 ns/op       68352700 ops/s  0 B/op 0 allocs/op
-go      ulid.NewParallel                   394.1 ns/op        2537427 ops/s  0 B/op 0 allocs/op
-go      uuid.NewV4                         267.3 ns/op        3741115 ops/s  0 B/op 0 allocs/op
-go      uuid.NewV7                         119.5 ns/op        8368201 ops/s  0 B/op 0 allocs/op
-go      uuid.NewV7String                   140.3 ns/op        7127584 ops/s  48 B/op 1 allocs/op
-go      uuid.Monotonic                      49.9 ns/op       20032051 ops/s  0 B/op 0 allocs/op
-go      uuid.Parse                          25.4 ns/op       39385585 ops/s  0 B/op 0 allocs/op
+go      nanoid.New                         296.5 ns/op        3372681 ops/s  48 B/op 2 allocs/op
+go      nanoid.CustomHex                   310.7 ns/op        3218539 ops/s  48 B/op 2 allocs/op
+go      nanoid.CustomAlnum                 319.5 ns/op        3129890 ops/s  72 B/op 2 allocs/op
+go      nanoid.NewParallel                 755.5 ns/op        1323627 ops/s  48 B/op 2 allocs/op
+go      relid.Generate                     140.7 ns/op        7107321 ops/s  32 B/op 1 allocs/op
+go      relid.Monotonic                     65.8 ns/op       15190643 ops/s  32 B/op 1 allocs/op
+go      snowflake.Next                     243.9 ns/op        4100041 ops/s  0 B/op 0 allocs/op
+go      snowflake.NextParallel             299.1 ns/op        3343363 ops/s  0 B/op 0 allocs/op
+go      ulid.New                           124.8 ns/op        8012821 ops/s  0 B/op 0 allocs/op
+go      ulid.NewString                     157.8 ns/op        6337136 ops/s  32 B/op 1 allocs/op
+go      ulid.Monotonic                      45.3 ns/op       22094565 ops/s  0 B/op 0 allocs/op
+go      ulid.Parse                          14.8 ns/op       67567568 ops/s  0 B/op 0 allocs/op
+go      ulid.NewParallel                   412.0 ns/op        2427184 ops/s  0 B/op 0 allocs/op
+go      uuid.NewV4                         256.7 ns/op        3895598 ops/s  0 B/op 0 allocs/op
+go      uuid.NewV7                         121.8 ns/op        8210181 ops/s  0 B/op 0 allocs/op
+go      uuid.NewV7String                   138.9 ns/op        7199424 ops/s  48 B/op 1 allocs/op
+go      uuid.Monotonic                      54.0 ns/op       18525380 ops/s  0 B/op 0 allocs/op
+go      uuid.Parse                          27.7 ns/op       36088055 ops/s  0 B/op 0 allocs/op
 
 ## Java
 # Java 24.0.1, N=1000000
-java    ulid.generate                     240.2 ns/op        4162930 ops/s
-java    ulid.generate.toString            287.8 ns/op        3474416 ops/s
-java    ulid.monotonic                     30.5 ns/op       32808489 ops/s
-java    ulid.parse                         36.3 ns/op       27547830 ops/s
-java    uuid.v4                           141.4 ns/op        7071900 ops/s
-java    uuid.v7                           248.2 ns/op        4029299 ops/s
-java    uuid.v7.monotonic                  28.1 ns/op       35650095 ops/s
-java    relid.generate                    245.1 ns/op        4080781 ops/s
-java    relid.monotonic                    37.1 ns/op       26983361 ops/s
-java    snowflake.nextId                  244.0 ns/op        4098333 ops/s
-java    nanoid(21)                        230.5 ns/op        4337643 ops/s
-java    nanoid.custom(hex,21)             281.0 ns/op        3558354 ops/s
-java    snowflake.nextId x8               288.7 ns/op        3463970 ops/s
-java    ulid.generate x8                  133.4 ns/op        7496336 ops/s
+java    ulid.generate                     239.3 ns/op        4179167 ops/s
+java    ulid.generate.toString            275.7 ns/op        3626951 ops/s
+java    ulid.monotonic                     28.0 ns/op       35716572 ops/s
+java    ulid.parse                         33.6 ns/op       29778485 ops/s
+java    uuid.v4                           139.4 ns/op        7173479 ops/s
+java    uuid.v7                           249.9 ns/op        4000900 ops/s
+java    uuid.v7.monotonic                  27.9 ns/op       35850378 ops/s
+java    relid.generate                    254.5 ns/op        3929293 ops/s
+java    relid.monotonic                    37.6 ns/op       26629149 ops/s
+java    snowflake.nextId                  244.0 ns/op        4098175 ops/s
+java    nanoid(21)                        225.6 ns/op        4431979 ops/s
+java    nanoid.custom(hex,21)             282.0 ns/op        3546459 ops/s
+java    snowflake.nextId x8               291.0 ns/op        3436953 ops/s
+java    ulid.generate x8                  167.5 ns/op        5971654 ops/s
 
 ## Python
 # Python 3.12.11 (arm64), N=200000
-python  ulid.generate(str)               2790.0 ns/op        358,421 ops/s
-python  ulid.ULID.generate               1260.3 ns/op        793,440 ops/s
-python  ulid.monotonic                    407.6 ns/op      2,453,601 ops/s
-python  ulid.parse                       2451.1 ns/op        407,983 ops/s
-python  uuid.v4                          1819.7 ns/op        549,537 ops/s
-python  uuid.v7                          1748.9 ns/op        571,781 ops/s
-python  uuid.v7.monotonic                 868.3 ns/op      1,151,619 ops/s
-python  relid.generate                   1519.5 ns/op        658,102 ops/s
-python  relid.monotonic                   619.2 ns/op      1,614,960 ops/s
-python  snowflake.next_id                 404.6 ns/op      2,471,504 ops/s
-python  nanoid(21)                       1204.8 ns/op        830,032 ops/s
-python  nanoid.custom(hex,21)            1478.4 ns/op        676,425 ops/s
+python  ulid.generate(str)               2018.7 ns/op        495,362 ops/s
+python  ulid.ULID.generate               1346.3 ns/op        742,794 ops/s
+python  ulid.monotonic                    439.4 ns/op      2,276,082 ops/s
+python  ulid.parse                        434.3 ns/op      2,302,446 ops/s
+python  uuid.v4                          1868.0 ns/op        535,319 ops/s
+python  uuid.v7                          2002.6 ns/op        499,357 ops/s
+python  uuid.v7.monotonic                 973.2 ns/op      1,027,542 ops/s
+python  relid.generate                   1577.2 ns/op        634,026 ops/s
+python  relid.monotonic                   578.3 ns/op      1,729,279 ops/s
+python  snowflake.next_id                 415.1 ns/op      2,409,150 ops/s
+python  nanoid(21)                       1197.8 ns/op        834,852 ops/s
+python  nanoid.custom(hex,21)            1330.6 ns/op        751,522 ops/s
 
 ## Redis
 # Redis 8.4.0, N=200000, 50 clients, pipeline 16
-redis   PING                                      573065.88 req/s
-redis   ULID.GENERATE                             571428.56 req/s
-redis   ULID.MONOTONIC                            519480.53 req/s
-redis   UUIDV4.GENERATE                           497512.44 req/s
-redis   UUIDV7.GENERATE                           466200.47 req/s
-redis   UUIDV7.MONOTONIC                          544959.12 req/s
-redis   RELID.GENERATE customer-42                557103.06 req/s
-redis   RELID.MONOTONIC customer-42               495049.50 req/s
-redis   SNOWFLAKE.GENERATE                        530504.00 req/s
-redis   NANOID.GENERATE                           542005.44 req/s
-redis   NANOID.GENERATE 21 0123456789abcdef       519480.53 req/s
+redis   PING                                      550964.19 req/s
+redis   ULID.GENERATE                             527704.50 req/s
+redis   ULID.MONOTONIC                            461893.78 req/s
+redis   UUIDV4.GENERATE                           464037.12 req/s
+redis   UUIDV7.GENERATE                           503778.31 req/s
+redis   UUIDV7.MONOTONIC                          480769.22 req/s
+redis   RELID.GENERATE customer-42                515463.91 req/s
+redis   RELID.MONOTONIC customer-42               522193.22 req/s
+redis   SNOWFLAKE.GENERATE                        431965.44 req/s
+redis   NANOID.GENERATE                           490196.09 req/s
+redis   NANOID.GENERATE 21 0123456789abcdef       506329.09 req/s
 
 ## MySQL
 # MySQL 9.2.0, BENCHMARK(1000000, expr), single connection
-mysql   UUID()                                   71.9 ns/op       13914786 ops/s
-mysql   ulid_generate()                         112.2 ns/op        8911306 ops/s
-mysql   ulid_generate_monotonic()                68.9 ns/op       14504525 ops/s
-mysql   uuidv4_generate()                       164.5 ns/op        6078806 ops/s
-mysql   uuidv7_generate()                       132.5 ns/op        7548309 ops/s
-mysql   uuidv7_generate_monotonic()              76.6 ns/op       13056194 ops/s
-mysql   relid_generate('customer-42')           158.5 ns/op        6307875 ops/s
-mysql   relid_generate_monotonic('customer-42')    106.2 ns/op        9420276 ops/s
-mysql   snowflake_generate()                    281.4 ns/op        3554178 ops/s
-mysql   nanoid_generate()                       218.0 ns/op        4587408 ops/s
-mysql   nanoid_generate(21, '0123456789abcdef')    194.7 ns/op        5135843 ops/s
+mysql   UUID()                                   69.7 ns/op       14346585 ops/s
+mysql   ulid_generate()                         103.0 ns/op        9706947 ops/s
+mysql   ulid_generate_monotonic()                65.4 ns/op       15288650 ops/s
+mysql   uuidv4_generate()                       131.8 ns/op        7587714 ops/s
+mysql   uuidv7_generate()                       110.5 ns/op        9045681 ops/s
+mysql   uuidv7_generate_monotonic()              64.5 ns/op       15493787 ops/s
+mysql   relid_generate('customer-42')           132.5 ns/op        7546657 ops/s
+mysql   relid_generate_monotonic('customer-42')     98.0 ns/op       10199294 ops/s
+mysql   snowflake_generate()                    282.0 ns/op        3545823 ops/s
+mysql   nanoid_generate()                       202.6 ns/op        4935712 ops/s
+mysql   nanoid_generate(21, '0123456789abcdef')    180.7 ns/op        5533361 ops/s
 
 ## PostgreSQL
 # PostgreSQL 17, SELECT count(expr) FROM generate_series(1, 1000000), single session
-postgres baseline count(n)                          89.5 ns/op       11175682 ops/s  (89 ms total)
-postgres gen_random_uuid()                         550.9 ns/op        1815050 ops/s  (640 ms total)
-postgres ulid_generate()                            80.8 ns/op       12377923 ops/s  (170 ms total)
-postgres ulid_generate_monotonic()                  43.0 ns/op       23267177 ops/s  (132 ms total)
-postgres ulid_generate_uuid()                       62.6 ns/op       15986955 ops/s  (152 ms total)
-postgres uuidv7_generate()                          62.6 ns/op       15978525 ops/s  (152 ms total)
-postgres uuidv7_generate_monotonic()                24.1 ns/op       41454214 ops/s  (114 ms total)
-postgres relid_generate('customer-42')              85.0 ns/op       11766367 ops/s  (174 ms total)
-postgres relid_generate_monotonic('customer-42')     54.8 ns/op       18242516 ops/s  (144 ms total)
-postgres snowflake_generate()                      197.4 ns/op        5065625 ops/s  (287 ms total)
-postgres nanoid_generate()                         119.3 ns/op        8379841 ops/s  (209 ms total)
-postgres nanoid_generate(21, '0123456789abcdef')     95.6 ns/op       10459157 ops/s  (185 ms total)
+postgres baseline count(n)                          91.2 ns/op       10969242 ops/s  (91 ms total)
+postgres gen_random_uuid()                         611.7 ns/op        1634844 ops/s  (703 ms total)
+postgres ulid_generate()                            80.5 ns/op       12416962 ops/s  (172 ms total)
+postgres ulid_generate_monotonic()                  42.6 ns/op       23487962 ops/s  (134 ms total)
+postgres ulid_generate_uuid()                       70.7 ns/op       14143471 ops/s  (162 ms total)
+postgres uuidv7_generate()                          60.8 ns/op       16459009 ops/s  (152 ms total)
+postgres uuidv7_generate_monotonic()                28.1 ns/op       35643000 ops/s  (119 ms total)
+postgres relid_generate('customer-42')              84.3 ns/op       11857754 ops/s  (175 ms total)
+postgres relid_generate_monotonic('customer-42')     63.3 ns/op       15787064 ops/s  (155 ms total)
+postgres snowflake_generate()                      196.0 ns/op        5101338 ops/s  (287 ms total)
+postgres nanoid_generate()                          99.0 ns/op       10104276 ops/s  (190 ms total)
+postgres nanoid_generate(21, '0123456789abcdef')     93.4 ns/op       10702398 ops/s  (185 ms total)
