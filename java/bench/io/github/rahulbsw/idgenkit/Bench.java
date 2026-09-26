@@ -1,5 +1,6 @@
 package io.github.rahulbsw.idgenkit;
 
+import java.nio.charset.StandardCharsets;
 import java.util.function.Supplier;
 
 /**
@@ -27,6 +28,9 @@ public final class Bench {
         bench("uuid.v4", n, Uuids::v4);
         bench("uuid.v7", n, Uuids::v7);
         bench("uuid.v7.monotonic", n, uuidMono::next);
+        RelativeId relid = new RelativeId("bench-only-secret-0123456789".getBytes(StandardCharsets.UTF_8), "orders");
+        bench("relid.generate", n, () -> relid.generate("customer-42"));
+        bench("relid.monotonic", n, () -> relid.monotonic("customer-42"));
         bench("snowflake.nextId", n, sf::nextId);
         bench("nanoid(21)", n, () -> NanoId.generate());
         bench("nanoid.custom(hex,21)", n, hex::next);

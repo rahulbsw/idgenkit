@@ -1,6 +1,7 @@
 package io.github.rahulbsw.idgenkit;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -31,6 +32,12 @@ public final class Conformance {
         run("uuidGenerate", Conformance::uuidGenerate);
         run("uuidMonotonic", Conformance::uuidMonotonic);
         run("uuidMonotonicVectors", Conformance::uuidMonotonicVectors);
+        run("relidTagVectors", Conformance::relidTagVectors);
+        run("relidVectors", Conformance::relidVectors);
+        run("relidInvalid", Conformance::relidInvalid);
+        run("relidMonotonicVectors", Conformance::relidMonotonicVectors);
+        run("relidGenerate", Conformance::relidGenerate);
+        run("relidMonotonic", Conformance::relidMonotonic);
         run("snowflakeVectors", Conformance::snowflakeVectors);
         run("snowflakeSequenceVectors", Conformance::snowflakeSequenceVectors);
         run("snowflakeValidation", Conformance::snowflakeValidation);
@@ -227,6 +234,138 @@ public final class Conformance {
             }
             check(!(r[2].equals("-") && drew[0]), where + ": drew randomness");
         }
+    }
+
+    private static final byte[] TEST_SECRET = "test-only-secret-0123456789".getBytes(StandardCharsets.UTF_8);
+
+    private static String utf8OrEmpty(String hex) {
+        return hex.equals("-") ? "" : new String(hex(hex), StandardCharsets.UTF_8);
+    }
+
+    static void relidTagVectors() throws IOException {
+        List<String[]> rows = vectors("relid_tag.txt");
+        check(rows.size() > 10, "too few relid_tag vectors");
+        for (String[] r : rows) {
+            RelativeId g = new RelativeId(hex(r[0]), utf8OrEmpty(r[1]));
+            String key = utf8OrEmpty(r[2]);
+            check(g.tagValue(key) == Integer.parseInt(r[3]), String.join(" ", r) + ": tag " + g.tagValue(key));
+            check(g.tag(key).equals(r[4]), String.join(" ", r) + ": tag text " + g.tag(key));
+        }
+        throwsIllegal(() -> new RelativeId("0123456789abcde".getBytes(StandardCharsets.UTF_8)), "short secret");
+    }
+
+    static void relidVectors() throws IOException {
+        List<String[]> rows = vectors("relid.txt");
+        check(rows.size() > 10, "too few relid vectors");
+        for (String[] r : rows) {
+            String where = String.join(" ", r);
+            if (r[0].equals("parts")) {
+                long tag = Long.parseLong(r[1]);
+                long ms = Long.parseLong(r[2]);
+                long rand = Long.parseLong(r[3]);
+                if (r[4].equals("error")) {
+                    throwsIllegal(() -> RelativeId.fromParts((int) tag, ms, rand), where);
+                    continue;
+                }
+                check(RelativeId.fromParts((int) tag, ms, rand).equals(r[4]), where);
+                check(RelativeId.parse(r[4]).equals(new RelativeId.Parts((int) tag, ms, rand)), "parse " + where);
+            } else {
+                RelativeId.Parts p = RelativeId.parse(r[1]);
+                check(p.tag() == Integer.parseInt(r[2]) && p.timestampMs() == Long.parseLong(r[3])
+                        && p.random() == Long.parseLong(r[4]), "parse " + where);
+            }
+        }
+    }
+
+    static void relidInvalid() throws IOException {
+        List<String> rows = new ArrayList<>();
+        for (String line : Files.readAllLines(testdata.resolve("relid_invalid.txt"))) {
+            if (!line.startsWith("#")) {
+                rows.add(line.substring(1, line.length() - 1));
+            }
+        }
+        check(rows.size() > 10, "too few relid_invalid vectors");
+        for (String s : rows) {
+            throwsIllegal(() -> RelativeId.parse(s), '"' + s + '"');
+        }
+    }
+
+    static void relidMonotonicVectors() throws IOException {
+        List<String[]> rows = vectors("relid_monotonic.txt");
+        check(rows.size() > 10, "too few relid_monotonic vectors");
+        RelativeId g = new RelativeId(TEST_SECRET);
+        for (String[] r : rows) {
+            if (r[0].equals("reset")) {
+                g = new RelativeId(TEST_SECRET);
+                continue;
+            }
+            String where = String.join(" ", r);
+            boolean[] drew = {false};
+            RelativeId gen = g;
+            Runnable step = () -> {
+                String id = gen.monotonic(Integer.parseInt(r[1]), Long.parseLong(r[2]), buf -> {
+                    drew[0] = true;
+                    if (!r[3].equals("-")) {
+                        System.arraycopy(hex(r[3]), 0, buf, 0, buf.length);
+                    }
+                });
+                check(id.equals(r[4]), where + ": got " + id);
+            };
+            if (r[4].equals("error")) {
+                throwsIllegal(step, where);
+            } else {
+                step.run();
+            }
+            check(!(r[3].equals("-") && drew[0]), where + ": drew randomness");
+        }
+    }
+
+    static void relidGenerate() {
+        RelativeId orders = new RelativeId(TEST_SECRET, "orders");
+        RelativeId invoices = new RelativeId(TEST_SECRET, "invoices");
+        String tag = orders.tag("customer-42");
+        long now = System.currentTimeMillis();
+        Set<String> set = new HashSet<>();
+        for (int i = 0; i < 10_000; i++) {
+            String id = orders.generate("customer-42");
+            check(id.startsWith(tag + "-"), "tag prefix " + id);
+            set.add(id);
+        }
+        check(set.size() == 10_000, "duplicates");
+        check(!invoices.tag("customer-42").equals(tag), "salt did not change the tag");
+        RelativeId.Parts p = RelativeId.parse(orders.generate("customer-42"));
+        check(p.tagText().equals(tag) && p.timestampMs() >= now && p.timestampMs() < now + 5000, "parts " + p);
+    }
+
+    static void relidMonotonic() throws InterruptedException {
+        RelativeId g = new RelativeId(TEST_SECRET);
+        String a = "";
+        String b = "";
+        for (int i = 0; i < 30_000; i++) {
+            if (i % 3 == 0) {
+                String id = g.monotonic("customer-7");
+                check(id.compareTo(a) > 0, id + " after " + a);
+                a = id;
+            } else {
+                String id = g.monotonic("customer-42");
+                check(id.compareTo(b) > 0, id + " after " + b);
+                b = id;
+            }
+        }
+        Set<String> all = ConcurrentHashMap.newKeySet();
+        Thread[] ts = new Thread[8];
+        for (int t = 0; t < ts.length; t++) {
+            ts[t] = new Thread(() -> {
+                for (int i = 0; i < 5000; i++) {
+                    all.add(g.monotonic("k"));
+                }
+            });
+            ts[t].start();
+        }
+        for (Thread t : ts) {
+            t.join();
+        }
+        check(all.size() == 40_000, "concurrent duplicates: " + all.size());
     }
 
     static LongSupplier scriptedClock(String readings) {

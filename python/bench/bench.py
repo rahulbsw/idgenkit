@@ -12,6 +12,7 @@ from idgenkit import (  # noqa: E402
     ULID,
     MonotonicULID,
     MonotonicUUID7,
+    RelativeId,
     Snowflake,
     custom_alphabet,
     nanoid,
@@ -45,6 +46,9 @@ def main():
     bench("uuid.v4", uuid4)
     bench("uuid.v7", uuid7)
     bench("uuid.v7.monotonic", uuid_mono.next)
+    relid = RelativeId(b"bench-only-secret-0123456789", "orders")
+    bench("relid.generate", lambda: relid.generate("customer-42"))
+    bench("relid.monotonic", lambda: relid.monotonic("customer-42"))
     bench("snowflake.next_id", sf.next_id)
     bench("nanoid(21)", nanoid)
     bench("nanoid.custom(hex,21)", hex_gen)

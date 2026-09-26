@@ -1,4 +1,4 @@
-//! Dependency-free ULID, UUIDv4/v7, Snowflake and Nano ID generators.
+//! Dependency-free ULID, UUIDv4/v7, relative ID, Snowflake and Nano ID generators.
 //!
 //! ```
 //! let id = idgenkit::ulid::Ulid::new().to_string();
@@ -7,6 +7,12 @@
 //! let u = idgenkit::uuid::Uuid::new_v7().unwrap();
 //! assert_eq!(u.version(), 7);
 //!
+//! // Load the secret from configuration or a key store, never from source code.
+//! # let secret = [7u8; 32];
+//! let orders = idgenkit::relid::RelativeId::new(&secret, "orders").unwrap();
+//! let rid = orders.generate("customer-42").unwrap();
+//! assert!(rid.starts_with(&(orders.tag("customer-42") + "-")));
+//!
 //! let sf = idgenkit::snowflake::Snowflake::new(1, 0).unwrap();
 //! assert!(sf.next_id().unwrap() > 0);
 //!
@@ -14,7 +20,9 @@
 //! ```
 
 pub mod nanoid;
+pub mod relid;
 pub mod rng;
+mod sha256;
 pub mod snowflake;
 pub mod ulid;
 pub mod uuid;
@@ -35,6 +43,9 @@ pub enum Error {
     Size,
     InvalidUuid,
     NotUuidV7,
+    InvalidRelativeId,
+    Secret,
+    OutOfRange,
 }
 
 impl fmt::Display for Error {
@@ -51,6 +62,11 @@ impl fmt::Display for Error {
             Error::Size => "size must be >= 1",
             Error::InvalidUuid => "UUID must be 36 characters in 8-4-4-4-12 hex form",
             Error::NotUuidV7 => "not a version 7 UUID",
+            Error::InvalidRelativeId => {
+                "relative ID must be 28 characters (or 26 without hyphens) of Crockford base32"
+            }
+            Error::Secret => "secret must be at least 16 bytes",
+            Error::OutOfRange => "value out of range",
         })
     }
 }

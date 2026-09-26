@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread;
 use idgenkit::nanoid::{self, CustomAlphabet, URL_ALPHABET};
+use idgenkit::relid::{self, Parts, RelativeId};
 use idgenkit::snowflake::{self, Snowflake};
 use idgenkit::ulid::{MonotonicGenerator, Ulid, MAX_TIME};
 use idgenkit::uuid::{MonotonicV7Generator, Uuid};
@@ -138,6 +139,100 @@ fn uuid_monotonic() {
         })
         .collect();
     let all: HashSet<Uuid> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
+    assert_eq!(all.len(), 40_000);
+}
+
+const TEST_SECRET: &[u8] = b"test-only-secret-0123456789";
+
+fn hex_or_empty(s: &str) -> Vec<u8> {
+    if s == "-" {
+        Vec::new()
+    } else {
+        hex(s)
+    }
+}
+
+#[test]
+fn relid_tag_vectors() {
+    let rows = vectors("relid_tag.txt");
+    assert!(rows.len() > 10);
+    for r in rows {
+        let salt = String::from_utf8(hex_or_empty(&r[1])).unwrap();
+        let key = String::from_utf8(hex_or_empty(&r[2])).unwrap();
+        let gen = RelativeId::new(&hex(&r[0]), &salt).unwrap();
+        assert_eq!(gen.tag_value(&key), r[3].parse::<u32>().unwrap(), "{r:?}");
+        assert_eq!(gen.tag(&key), r[4], "{r:?}");
+    }
+    assert_eq!(RelativeId::new(b"0123456789abcde", "").unwrap_err(), Error::Secret);
+}
+
+#[test]
+fn relid_vectors() {
+    let rows = vectors("relid.txt");
+    assert!(rows.len() > 10);
+    for r in rows {
+        if r[0] == "parts" {
+            let (tag, ms, rnd): (u64, u64, u64) =
+                (r[1].parse().unwrap(), r[2].parse().unwrap(), r[3].parse().unwrap());
+            let got = u32::try_from(tag).map_err(|_| Error::OutOfRange).and_then(|t| relid::from_parts(t, ms, rnd));
+            if r[4] == "error" {
+                assert!(got.is_err(), "{r:?}");
+                continue;
+            }
+            assert_eq!(got.as_deref(), Ok(r[4].as_str()));
+            let p = Parts::parse(&r[4]).unwrap();
+            assert_eq!((p.tag as u64, p.timestamp_ms, p.random), (tag, ms, rnd));
+        } else {
+            let p: Parts = r[1].parse().unwrap();
+            assert_eq!(
+                (p.tag.to_string(), p.timestamp_ms.to_string(), p.random.to_string()),
+                (r[2].clone(), r[3].clone(), r[4].clone())
+            );
+        }
+    }
+}
+
+#[test]
+fn relid_invalid() {
+    let path = format!("{}/../testdata/relid_invalid.txt", env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(path).unwrap();
+    let rows: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).map(|l| &l[1..l.len() - 1]).collect();
+    assert!(rows.len() > 10);
+    for s in rows {
+        assert_eq!(Parts::parse(s), Err(Error::InvalidRelativeId), "{s:?} should fail");
+    }
+}
+
+#[test]
+fn relid_generate() {
+    let orders = RelativeId::new(TEST_SECRET, "orders").unwrap();
+    let invoices = RelativeId::new(TEST_SECRET, "invoices").unwrap();
+    let tag = orders.tag("customer-42");
+    let ids: HashSet<String> = (0..10_000).map(|_| orders.generate("customer-42").unwrap()).collect();
+    assert_eq!(ids.len(), 10_000);
+    assert!(ids.iter().all(|i| i.starts_with(&format!("{tag}-"))));
+    assert_ne!(invoices.tag("customer-42"), tag);
+    let p = Parts::parse(ids.iter().next().unwrap()).unwrap();
+    assert_eq!(p.tag_text(), tag);
+}
+
+#[test]
+fn relid_monotonic() {
+    let gen = Arc::new(RelativeId::new(TEST_SECRET, "").unwrap());
+    let (mut a, mut b) = (String::new(), String::new());
+    for i in 0..30_000 {
+        let (key, last) = if i % 3 == 0 { ("customer-7", &mut a) } else { ("customer-42", &mut b) };
+        let id = gen.monotonic(key).unwrap();
+        assert!(id > *last, "{id} after {last}");
+        *last = id;
+    }
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let g = Arc::clone(&gen);
+            thread::spawn(move || (0..5000).map(|_| g.monotonic("k").unwrap()).collect::<Vec<_>>())
+        })
+        .collect();
+    let all: HashSet<String> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
     assert_eq!(all.len(), 40_000);
 }
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "idgenkit"
 version = "0.1.0"
-description = "Dependency-free ULID, UUIDv4/v7, Snowflake and Nano ID generators"
+description = "Dependency-free ULID, UUIDv4/v7, relative ID, Snowflake and Nano ID generators"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 use idgenkit::nanoid::{self, CustomAlphabet};
+use idgenkit::relid::RelativeId;
 use idgenkit::snowflake::Snowflake;
 use idgenkit::ulid::{MonotonicGenerator, Ulid};
 use idgenkit::uuid::{MonotonicV7Generator, Uuid};
@@ -64,6 +65,9 @@ fn main() {
     bench("uuid.v4", n, Uuid::new_v4);
     bench("uuid.v7", n, || Uuid::new_v7().unwrap());
     bench("uuid.v7.monotonic", n, || uuid_mono.next().unwrap());
+    let relid = RelativeId::new(b"bench-only-secret-0123456789", "orders").unwrap();
+    bench("relid.generate", n, || relid.generate(black_box("customer-42")).unwrap());
+    bench("relid.monotonic", n, || relid.monotonic(black_box("customer-42")).unwrap());
     bench("snowflake.next_id", n, || sf.next_id().unwrap());
     bench("nanoid(21)", n, nanoid::nanoid);
     bench("nanoid.custom(hex,21)", n, || hex.generate());

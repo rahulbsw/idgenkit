@@ -1,6 +1,6 @@
 # idgenkit (Python)
 
-Dependency-free ULID, UUIDv4/v7, Snowflake and Nano ID generators in pure
+Dependency-free ULID, UUIDv4/v7, relative ID, Snowflake and Nano ID generators in pure
 Python (3.9+). Randomness comes from `os.urandom`; UUIDs are standard
 `uuid.UUID` values.
 
@@ -29,6 +29,14 @@ parts = gen.parse(sf)           # SnowflakeParts(timestamp_ms, machine_id, seque
 s = nanoid()                    # 21 URL-safe characters
 hex_id = custom_alphabet("0123456789abcdef", 12)
 h = hex_id()
+
+from idgenkit import RelativeId
+from idgenkit.relid import parse
+# The secret (at least 16 bytes) comes from your secret store, never from source code.
+rel = RelativeId(os.environb[b"IDGENKIT_RELID_SECRET"], salt="orders")
+r = rel.generate("customer-42")  # "TTTTTT-MMMMMMMMMM-RRRRRRRRRR"; same tag for every customer-42 ID
+prefix = rel.tag("customer-42")  # range-scan prefix: id LIKE prefix || '-%'
+p = parse(r)                     # RelativeIdParts(tag, timestamp_ms, random)
 ```
 
 Implementations for Java, Rust and Go, plus PostgreSQL, MySQL and Redis

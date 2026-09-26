@@ -15,6 +15,7 @@ from idgenkit import (  # noqa: E402
     URL_ALPHABET,
     MonotonicULID,
     MonotonicUUID7,
+    RelativeId,
     Snowflake,
     custom_alphabet,
     custom_random,
@@ -23,7 +24,7 @@ from idgenkit import (  # noqa: E402
     uuid7,
     uuid7_timestamp,
 )
-from idgenkit import snowflake, ulid, uuids  # noqa: E402
+from idgenkit import relid, snowflake, ulid, uuids  # noqa: E402
 
 
 def vectors(name):
@@ -209,6 +210,99 @@ class UUIDTest(unittest.TestCase):
             else:
                 self.assertEqual(str(gen._next_at(now, source)), want, row)
             self.assertFalse(rnd == "-" and drew, f"{row}: drew randomness")
+
+
+TEST_SECRET = b"test-only-secret-0123456789"
+
+
+class RelativeIdTest(unittest.TestCase):
+    def test_tag_vectors(self):
+        rows = vectors("relid_tag.txt")
+        self.assertGreater(len(rows), 10)
+        for secret, salt, key, tag, tag_text in rows:
+            salt = "" if salt == "-" else bytes.fromhex(salt).decode()
+            key = "" if key == "-" else bytes.fromhex(key).decode()
+            gen = RelativeId(bytes.fromhex(secret), salt)
+            self.assertEqual(gen.tag_value(key), int(tag))
+            self.assertEqual(gen.tag(key), tag_text)
+
+    def test_secret(self):
+        with self.assertRaises(ValueError):
+            RelativeId(b"0123456789abcde")
+        with self.assertRaises(ValueError):
+            RelativeId("0123456789abcdef")  # a str, not bytes
+
+    def test_vectors(self):
+        rows = vectors("relid.txt")
+        self.assertGreater(len(rows), 10)
+        for row in rows:
+            if row[0] == "parts":
+                tag, ms, rnd, want = int(row[1]), int(row[2]), int(row[3]), row[4]
+                if want == "error":
+                    with self.assertRaises(ValueError, msg=row):
+                        relid.from_parts(tag, ms, rnd)
+                    continue
+                self.assertEqual(relid.from_parts(tag, ms, rnd), want)
+                self.assertEqual(relid.parse(want), (tag, ms, rnd))
+            else:
+                self.assertEqual(relid.parse(row[1]), (int(row[2]), int(row[3]), int(row[4])))
+
+    def test_invalid(self):
+        with open(os.path.join(TESTDATA, "relid_invalid.txt"), encoding="utf-8") as f:
+            rows = [line.rstrip("\n")[1:-1] for line in f if not line.startswith("#")]
+        self.assertGreater(len(rows), 10)
+        for text in rows:
+            with self.assertRaises(ValueError, msg=repr(text)):
+                relid.parse(text)
+
+    def test_monotonic_vectors(self):
+        rows = vectors("relid_monotonic.txt")
+        self.assertGreater(len(rows), 10)
+        gen = RelativeId(TEST_SECRET)
+        for row in rows:
+            if row[0] == "reset":
+                gen = RelativeId(TEST_SECRET)
+                continue
+            tag, now, rnd, want = int(row[1]), int(row[2]), row[3], row[4]
+            drew = []
+
+            def source(n, rnd=rnd):
+                drew.append(n)
+                return bytes(n) if rnd == "-" else bytes.fromhex(rnd)
+
+            if want == "error":
+                with self.assertRaises((ValueError, OverflowError), msg=row):
+                    gen._monotonic_at(tag, now, source)
+            else:
+                self.assertEqual(gen._monotonic_at(tag, now, source), want, row)
+            self.assertFalse(rnd == "-" and drew, f"{row}: drew randomness")
+
+    def test_generate(self):
+        now = int(time.time() * 1000)
+        orders = RelativeId(TEST_SECRET, "orders")
+        invoices = RelativeId(TEST_SECRET, "invoices")
+        ids = [orders.generate("customer-42") for _ in range(10000)]
+        self.assertEqual(len(set(ids)), 10000)
+        tag = orders.tag("customer-42")
+        self.assertTrue(all(i.startswith(tag + "-") for i in ids))
+        self.assertNotEqual(invoices.tag("customer-42"), tag)
+        self.assertLess(abs(relid.parse(ids[0]).timestamp_ms - now), 5000)
+        self.assertEqual(relid.parse(ids[0]).tag_text, tag)
+
+    def test_monotonic(self):
+        gen = RelativeId(TEST_SECRET)
+        ids = [gen.monotonic("customer-42" if i % 3 else "customer-7") for i in range(30000)]
+        for key in ("customer-42", "customer-7"):
+            mine = [i for i in ids if i.startswith(gen.tag(key))]
+            self.assertTrue(all(a < b for a, b in zip(mine, mine[1:])))
+        seen, threads = [], []
+        for _ in range(8):
+            t = threading.Thread(target=lambda: seen.extend(gen.monotonic("k") for _ in range(5000)))
+            threads.append(t)
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(len(set(seen)), 40000)
 
 
 class SnowflakeTest(unittest.TestCase):
