@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 990 316" font-family="-apple-system, Segoe UI, system-ui, sans-serif" font-size="13" role="img" aria-label="Parquet bytes per ID with the best layout, steady 1,000 IDs/s (lower is better)">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 446" font-family="-apple-system, Segoe UI, system-ui, sans-serif" font-size="13" role="img" aria-label="Parquet bytes per ID with the best layout, steady 1,000 IDs/s (lower is better)">
 <text x="0" y="18" font-size="15" font-weight="600" fill="#6e7781">Parquet bytes per ID with the best layout, steady 1,000 IDs/s (lower is better)</text>
 <text x="242" y="60" text-anchor="end" fill="#6e7781">bigint sequence (baseline)</text>
 <rect x="250" y="47" width="2.0" height="18" rx="3" fill="#4493f8"/>
@@ -7,27 +7,42 @@
 <rect x="250" y="73" width="2.0" height="18" rx="3" fill="#4493f8"/>
 <text x="258.0" y="86" fill="#6e7781">0.01 B · delta + zstd; defaults 4.03 B</text>
 <text x="242" y="112" text-anchor="end" fill="#6e7781">uuid v4</text>
-<rect x="250" y="99" width="314.9" height="18" rx="3" fill="#d29922"/>
-<text x="570.9" y="112" fill="#6e7781">16 B · plain + zstd; defaults 16.14 B</text>
+<rect x="250" y="99" width="314.7" height="18" rx="3" fill="#d29922"/>
+<text x="570.7" y="112" fill="#6e7781">16 B · plain + zstd; defaults 16.14 B</text>
 <text x="242" y="138" text-anchor="end" fill="#6e7781">uuid v7</text>
-<rect x="250" y="125" width="184.8" height="18" rx="3" fill="#4493f8"/>
-<text x="440.8" y="138" fill="#6e7781">9.39 B · byte_stream_split + zstd; defaults 14.28 B</text>
+<rect x="250" y="125" width="184.7" height="18" rx="3" fill="#4493f8"/>
+<text x="440.7" y="138" fill="#6e7781">9.39 B · byte_stream_split + zstd; defaults 14.28 B</text>
 <text x="242" y="164" text-anchor="end" fill="#6e7781">uuid v7, rows shuffled</text>
-<rect x="250" y="151" width="243.0" height="18" rx="3" fill="#4493f8"/>
-<text x="499.0" y="164" fill="#6e7781">12.35 B · byte_stream_split + zstd; defaults 15.61 B</text>
+<rect x="250" y="151" width="242.9" height="18" rx="3" fill="#4493f8"/>
+<text x="498.9" y="164" fill="#6e7781">12.35 B · byte_stream_split + zstd; defaults 15.61 B</text>
 <text x="242" y="190" text-anchor="end" fill="#6e7781">ulid</text>
-<rect x="250" y="177" width="197.0" height="18" rx="3" fill="#4493f8"/>
-<text x="453.0" y="190" fill="#6e7781">10.01 B · split: ms delta + rest zstd; defaults 14.28 B</text>
+<rect x="250" y="177" width="196.9" height="18" rx="3" fill="#4493f8"/>
+<text x="452.9" y="190" fill="#6e7781">10.01 B · split: ms delta + rest zstd; defaults 14.28 B</text>
 <text x="242" y="216" text-anchor="end" fill="#6e7781">ulid monotonic</text>
-<rect x="250" y="203" width="197.0" height="18" rx="3" fill="#4493f8"/>
-<text x="453.0" y="216" fill="#6e7781">10.01 B · split: ms delta + rest zstd; defaults 14.28 B</text>
+<rect x="250" y="203" width="196.9" height="18" rx="3" fill="#4493f8"/>
+<text x="452.9" y="216" fill="#6e7781">10.01 B · split: ms delta + rest zstd; defaults 14.28 B</text>
 <text x="242" y="242" text-anchor="end" fill="#6e7781">ulid text</text>
-<rect x="250" y="229" width="211.0" height="18" rx="3" fill="#4493f8"/>
-<text x="467.0" y="242" fill="#6e7781">10.72 B · delta + zstd; defaults 20.65 B</text>
-<text x="242" y="268" text-anchor="end" fill="#6e7781">nanoid text</text>
-<rect x="250" y="255" width="312.7" height="18" rx="3" fill="#d29922"/>
-<text x="568.7" y="268" fill="#6e7781">15.89 B · delta + zstd; defaults 23.36 B</text>
-<text x="242" y="294" text-anchor="end" fill="#6e7781">uuid v4 text</text>
-<rect x="250" y="281" width="380.0" height="18" rx="3" fill="#d29922"/>
-<text x="636.0" y="294" fill="#6e7781">19.31 B · delta + zstd; defaults 35.76 B</text>
+<rect x="250" y="229" width="210.8" height="18" rx="3" fill="#4493f8"/>
+<text x="466.8" y="242" fill="#6e7781">10.72 B · delta + zstd; defaults 20.65 B</text>
+<text x="242" y="268" text-anchor="end" fill="#6e7781">relid</text>
+<rect x="250" y="255" width="157.7" height="18" rx="3" fill="#4493f8"/>
+<text x="413.7" y="268" fill="#6e7781">8.02 B · split: tag dict + ms delta + rest zstd; defaults 12.76 B</text>
+<text x="242" y="294" text-anchor="end" fill="#6e7781">relid monotonic</text>
+<rect x="250" y="281" width="157.7" height="18" rx="3" fill="#4493f8"/>
+<text x="413.7" y="294" fill="#6e7781">8.02 B · split: tag dict + ms delta + rest zstd; defaults 12.76 B</text>
+<text x="242" y="320" text-anchor="end" fill="#6e7781">relid, sorted by id</text>
+<rect x="250" y="307" width="159.9" height="18" rx="3" fill="#4493f8"/>
+<text x="415.9" y="320" fill="#6e7781">8.13 B · byte_stream_split + zstd; defaults 11.49 B</text>
+<text x="242" y="346" text-anchor="end" fill="#6e7781">relid text</text>
+<rect x="250" y="333" width="226.0" height="18" rx="3" fill="#4493f8"/>
+<text x="482.0" y="346" fill="#6e7781">11.49 B · delta + zstd; defaults 20.98 B</text>
+<text x="242" y="372" text-anchor="end" fill="#6e7781">relid text, sorted by id</text>
+<rect x="250" y="359" width="190.2" height="18" rx="3" fill="#4493f8"/>
+<text x="446.2" y="372" fill="#6e7781">9.67 B · delta + zstd; defaults 17.92 B</text>
+<text x="242" y="398" text-anchor="end" fill="#6e7781">nanoid text</text>
+<rect x="250" y="385" width="312.5" height="18" rx="3" fill="#d29922"/>
+<text x="568.5" y="398" fill="#6e7781">15.89 B · delta + zstd; defaults 23.36 B</text>
+<text x="242" y="424" text-anchor="end" fill="#6e7781">uuid v4 text</text>
+<rect x="250" y="411" width="380.0" height="18" rx="3" fill="#d29922"/>
+<text x="636.0" y="424" fill="#6e7781">19.32 B · delta + zstd; defaults 35.76 B</text>
 </svg>

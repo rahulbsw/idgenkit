@@ -110,7 +110,7 @@ def main() -> None:
         "Parquet bytes per ID with the best layout, steady 1,000 IDs/s (lower is better)", "B",
         best,
         {fmt for fmt, size, _ in best if size >= 15},
-        note_w=360,
+        note_w=420,
     ))
     print("wrote", ", ".join(sorted(p.name for p in OUT.glob("*.svg"))))
 

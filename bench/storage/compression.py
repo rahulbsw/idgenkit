@@ -6,6 +6,9 @@ column as fixed-width binary or ASCII text, and compresses it with zlib and
 LZMA. This approximates what a columnar file (Parquet, ORC) does with a
 general-purpose codec. parquet.py measures real Parquet encodings.
 
+Relative IDs each belong to one of 1,000 keys picked at random, and are also
+measured sorted by ID, which groups each key's IDs together.
+
     python3 bench/storage/compression.py [N]
 """
 
@@ -13,6 +16,7 @@ from __future__ import annotations
 
 import lzma
 import os
+import random
 import sys
 import uuid
 import zlib
@@ -20,12 +24,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python" / "src"))
 
-from idgenkit import ULID, nanoid  # noqa: E402
+from idgenkit import ULID, RelativeId, nanoid  # noqa: E402
+from idgenkit.relid import MAX_RANDOM, MAX_TIMESTAMP, from_parts  # noqa: E402
 from idgenkit.snowflake import compose  # noqa: E402
 
 T0 = 1_780_000_000_000  # fixed start time (ms) so runs are reproducible in shape
 EPOCH = 1_288_834_974_657
 MACHINE = 7
+
+# Relative IDs: each ID belongs to one of RELID_KEYS keys, picked uniformly.
+RELID_KEYS = 1_000
+RELID_SEED = 20260925
+RELID_SECRET = b"bench-only-secret-0123456789"  # benchmark only; protects nothing
 
 
 def timestamps(n: int, per_ms: int) -> list[int]:
@@ -93,6 +103,37 @@ def sequence(ts: list[int]) -> bytes:
     return b"".join(i.to_bytes(8, "big") for i in range(1, len(ts) + 1))
 
 
+def relid_values(ts: list[int], monotonic: bool = False) -> list[int]:
+    """128-bit values tag << 98 | ms << 50 | random, in arrival order."""
+    gen = RelativeId(RELID_SECRET)
+    tags = [gen.tag_value(f"customer-{k}") for k in range(RELID_KEYS)]
+    picks = random.Random(RELID_SEED).choices(tags, k=len(ts))
+    rnd = os.urandom(7 * len(ts))
+    out, last_ms, last_rand = [], -1, 0
+    for i, (tag, ms) in enumerate(zip(picks, ts)):
+        if monotonic and ms == last_ms:
+            last_rand += 1
+        else:
+            last_rand = int.from_bytes(rnd[7 * i:7 * i + 7], "big") & MAX_RANDOM
+        last_ms = ms
+        out.append(tag << 98 | ms << 50 | last_rand)
+    return out
+
+
+def relid_binary(ts: list[int], monotonic: bool = False, by_id: bool = False) -> bytes:
+    vals = relid_values(ts, monotonic)
+    if by_id:
+        vals.sort()
+    return b"".join(v.to_bytes(16, "big") for v in vals)
+
+
+def relid_text(ts: list[int], by_id: bool = False) -> bytes:
+    vals = relid_values(ts)
+    if by_id:
+        vals.sort()
+    return "".join(from_parts(v >> 98, v >> 50 & MAX_TIMESTAMP, v & MAX_RANDOM) for v in vals).encode()
+
+
 FORMATS = [
     ("bigint sequence (baseline)", sequence),
     ("snowflake (8 B)", snowflake),
@@ -101,6 +142,11 @@ FORMATS = [
     ("ulid (16 B)", lambda ts: ulid_binary(ts, monotonic=False)),
     ("ulid monotonic (16 B)", lambda ts: ulid_binary(ts, monotonic=True)),
     ("ulid text (26 chars)", ulid_text),
+    ("relid (16 B)", relid_binary),
+    ("relid monotonic (16 B)", lambda ts: relid_binary(ts, monotonic=True)),
+    ("relid sorted by id (16 B)", lambda ts: relid_binary(ts, by_id=True)),
+    ("relid text (28 chars)", relid_text),
+    ("relid text sorted by id", lambda ts: relid_text(ts, by_id=True)),
     ("nanoid text (21 chars)", nanoid_text),
     ("uuid v4 text (36 chars)", uuid_v4_text),
 ]

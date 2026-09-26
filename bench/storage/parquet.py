@@ -3,7 +3,8 @@
 Uses the same generators and synthetic clock as compression.py, writes each
 column as a real Parquet file with several encodings, and reports file bytes
 per ID. It also writes each column in 100 row groups and counts how many row
-groups a point lookup must read after min/max statistics prune the rest.
+groups a point lookup must read after min/max statistics prune the rest, and
+for relative IDs, how many a scan for every ID of one key must read.
 
 Needs pyarrow (bench only; the libraries have no dependencies):
 
@@ -22,6 +23,8 @@ import pyarrow.parquet as pq
 
 from compression import (
     nanoid_text,
+    relid_binary,
+    relid_text,
     sequence,
     snowflake,
     timestamps,
@@ -49,7 +52,8 @@ def shuffled(build):
 
 
 # kind: "int64" (8-byte integer), "fixed16" (16 random bytes),
-# "timed16" (48-bit millisecond timestamp + 80 bits), "text" (fixed-width ASCII)
+# "timed16" (48-bit millisecond timestamp + 80 bits), "relid16" (30-bit tag +
+# 48-bit ms + 50 random bits), "text" (fixed-width ASCII)
 FORMATS = [
     ("bigint sequence (baseline)", sequence, "int64"),
     ("snowflake", snowflake, "int64"),
@@ -59,6 +63,11 @@ FORMATS = [
     ("ulid", lambda ts: ulid_binary(ts, monotonic=False), "timed16"),
     ("ulid monotonic", lambda ts: ulid_binary(ts, monotonic=True), "timed16"),
     ("ulid text", ulid_text, "text"),
+    ("relid", relid_binary, "relid16"),
+    ("relid monotonic", lambda ts: relid_binary(ts, monotonic=True), "relid16"),
+    ("relid, sorted by id", lambda ts: relid_binary(ts, by_id=True), "relid16"),
+    ("relid text", relid_text, "text"),
+    ("relid text, sorted by id", lambda ts: relid_text(ts, by_id=True), "text"),
     ("nanoid text", nanoid_text, "text"),
     ("uuid v4 text", uuid_v4_text, "text"),
 ]
@@ -102,6 +111,17 @@ def layouts(kind: str, vals: list):
         yield "split: ms delta + rest zstd", split, {
             **ZSTD, "column_encoding": {"ms": "DELTA_BINARY_PACKED", "rest": "PLAIN"},
         }
+    if kind == "relid16":
+        ints = [int.from_bytes(v, "big") for v in vals]
+        split = pa.table({
+            "tag": pa.array([v >> 98 for v in ints], pa.int32()),
+            "ms": pa.array([v >> 50 & (1 << 48) - 1 for v in ints], pa.int64()),
+            "rest": pa.array([(v & (1 << 50) - 1).to_bytes(7, "big") for v in ints], pa.binary(7)),
+        })
+        yield "split: tag dict + ms delta + rest zstd", split, {
+            **ZSTD, "use_dictionary": ["tag"],
+            "column_encoding": {"ms": "DELTA_BINARY_PACKED", "rest": "PLAIN"},
+        }
 
 
 def file_bytes(table: pa.Table, **options) -> int:
@@ -110,19 +130,36 @@ def file_bytes(table: pa.Table, **options) -> int:
     return sink.getvalue().size
 
 
-def row_groups_per_lookup(kind: str, vals: list) -> float:
+def row_group_ranges(kind: str, vals: list) -> list[tuple]:
+    """(min, max) statistics of each of ROW_GROUPS row groups."""
     width = 8 if kind == "int64" else len(vals[0])
     t = pa.table({"id": pa.array(vals, arrow_type(kind, width))})
     sink = pa.BufferOutputStream()
     pq.write_table(t, sink, row_group_size=len(vals) // ROW_GROUPS, **ZSTD)
     meta = pq.ParquetFile(pa.BufferReader(sink.getvalue())).metadata
-    ranges = [
+    return [
         (s.min, s.max)
         for s in (meta.row_group(g).column(0).statistics for g in range(meta.num_row_groups))
     ]
+
+
+def row_groups_per_lookup(kind: str, vals: list) -> float:
+    ranges = row_group_ranges(kind, vals)
     probes = random.Random(SEED).sample(vals, LOOKUPS)
     hits = sum(lo <= p <= hi for p in probes for lo, hi in ranges)
     return hits / LOOKUPS
+
+
+def relid_tag(kind: str, value) -> int | str:
+    """The part of a relative ID that is the same for every ID of one key."""
+    return int.from_bytes(value, "big") >> 98 if kind == "relid16" else value[:6]
+
+
+def row_groups_per_key_scan(kind: str, vals: list) -> float:
+    """Row groups a scan for every ID of one key reads after min/max pruning."""
+    ranges = [(relid_tag(kind, lo), relid_tag(kind, hi)) for lo, hi in row_group_ranges(kind, vals)]
+    keys = random.Random(SEED).sample(sorted({relid_tag(kind, v) for v in vals}), 100)
+    return sum(lo <= k <= hi for k in keys for lo, hi in ranges) / len(keys)
 
 
 def main() -> None:
@@ -132,18 +169,23 @@ def main() -> None:
     for per_ms, label in ((1, "1,000 IDs/s"), (100, "100,000 IDs/s")):
         ts = timestamps(n, per_ms)
         print(f"\n## steady {label}")
-        print(f"{'format':28}| {'layout':30}| B/ID")
+        print(f"{'format':28}| {'layout':38}| B/ID")
         cols = {}
         for name, build, kind in FORMATS:
             vals = values(kind, build(ts), n)
             cols[name] = (kind, vals)
             for layout, table, options in layouts(kind, vals):
-                print(f"{name:28}| {layout:30}| {file_bytes(table, **options) / n:.2f}")
+                print(f"{name:28}| {layout:38}| {file_bytes(table, **options) / n:.2f}")
         if per_ms == 1:
             print(f"\n## row groups read per point lookup (of {ROW_GROUPS}), steady {label}")
             print(f"{'format':28}| row groups")
             for name, (kind, vals) in cols.items():
                 print(f"{name:28}| {row_groups_per_lookup(kind, vals):.1f}")
+            print(f"\n## row groups read to scan every ID of one key (of {ROW_GROUPS}), steady {label}")
+            print(f"{'format':28}| row groups")
+            for name, (kind, vals) in cols.items():
+                if name.startswith("relid"):
+                    print(f"{name:28}| {row_groups_per_key_scan(kind, vals):.1f}")
 
 
 if __name__ == "__main__":

@@ -22,14 +22,18 @@ that you can rerun on your own hardware.
    stream at 1,000 and at 100,000 IDs per second, all from the same synthetic
    clock. Each column is stored as fixed-width binary or ASCII and compressed
    with zlib and LZMA, as a stand-in for a columnar file with a general-purpose
-   codec.
+   codec. Relative IDs belong to 1,000 keys (`customer-0` to `customer-999`),
+   with each ID's key picked at random, as rows from many customers arrive
+   interleaved. They're measured in that arrival order and again sorted by ID,
+   which groups each key's rows together.
 3. **Parquet encodings and row-group pruning**
    ([`parquet.py`](https://github.com/rahulbsw/idgenkit/blob/main/bench/storage/parquet.py)).
    The same million-ID columns are written as real Parquet files with pyarrow
    25.0.1, using pyarrow's defaults and then the encodings Parquet offers for
    each physical type. Each column is also written in 100 row groups, and we count
    how many a point lookup must read once min/max statistics have ruled out the
-   rest.
+   rest. For relative IDs we also count how many a scan for every ID of one key
+   must read.
 
 The runs used Docker on an Apple M-series Mac (4 CPUs, 6 GB for the VM) with
 the default `shared_buffers = 128MB`. Absolute times will differ on your
@@ -128,10 +132,15 @@ Bytes per ID after compression; lower is better. Highlighted cells still need
 |---|---|---|---|---|---|
 | `bigint` sequence (baseline) | 8 | 2.1 | 0.3 | 2.1 | 0.3 |
 | Snowflake | 8 | 2.1 | 0.2 | 2.2 | 0.3 |
-| UUIDv7, 16 bytes | 16 | 12.9 | 10.5 | 11.2 | 9.9 |
+| UUIDv7, 16 bytes | 16 | 12.9 | 10.7 | 11.2 | 9.9 |
 | ULID, 16 bytes | 16 | 13.0 | 10.9 | 12.1 | 10.4 |
 | ULID monotonic, 16 bytes | 16 | 13.0 | 10.9 | 1.9 | 0.4 |
 | ULID text, 26 chars | 26 | 13.4 | 11.3 | 12.4 | 10.9 |
+| Relative ID, 16 bytes | 16 | 10.9 | 8.6 | 10.0 | 8.4 |
+| Relative ID monotonic, 16 bytes | 16 | 10.9 | 8.7 | 4.6 | 1.8 |
+| Relative ID sorted by ID, 16 bytes | 16 | 10.0 | 8.2 | 9.0 | 7.4 |
+| Relative ID text, 28 chars | 28 | 12.6 | 8.8 | 11.3 | 8.6 |
+| Relative ID text sorted by ID | 28 | 11.2 | 8.8 | 10.2 | 7.6 |
 | UUIDv4, 16 bytes | 16 | <span class="bad">16.0</span> | <span class="bad">16.0</span> | <span class="bad">16.0</span> | <span class="bad">16.0</span> |
 | Nano ID text, 21 chars | 21 | <span class="bad">15.9</span> | <span class="bad">16.1</span> | <span class="bad">15.9</span> | <span class="bad">16.1</span> |
 | UUIDv4 text, 36 chars | 36 | <span class="bad">20.4</span> | <span class="bad">17.8</span> | <span class="bad">20.4</span> | <span class="bad">17.8</span> |
@@ -164,6 +173,15 @@ exploits the same property before any codec runs.
 like a sequence (0.4 bytes). The flip side is predictability: within a
 millisecond, the next ID can be guessed from the previous one.
 
+**Relative IDs are the smallest 128-bit format.** A relative ID has 50 random
+bits against ULID's 80, and its 30-bit tag repeats for every ID of the same key.
+With 1,000 keys the tag carries only about 10 bits of information, so the floor
+is about 7.5 bytes and LZMA gets to 8.6 in arrival order, 2.3 bytes less than
+ULID. Sorting by ID brings the same tags together and saves a little more (8.2).
+A monotonic generator keeps one counter for all keys, so within a millisecond
+the random part only counts up. At 100,000 IDs per second that leaves mostly
+the tag's 10 bits of key choice, and the column shrinks to 1.8 bytes.
+
 ## Results: Parquet encodings
 
 File bytes per ID at 1,000 IDs per second, with zstd level 3; lower is better.
@@ -179,12 +197,16 @@ after min/max pruning.
 | `bigint` sequence (baseline) | 4.28 | 1.03 | **0.01** delta | 0 | 1 |
 | Snowflake `INT64` | 4.03 | 0.84 | **0.01** delta | about 0 | 1 |
 | UUIDv7, 16 bytes | 14.28 | 12.14 | **9.39** byte stream split | 9.25 | 1 |
-| UUIDv7, rows shuffled | 15.61 | 14.06 | 12.35 byte stream split | 9.25 | <span class="bad">100</span> |
+| UUIDv7, rows shuffled | 15.61 | 14.05 | 12.35 byte stream split | 9.25 | <span class="bad">100</span> |
 | ULID, 16 bytes | 14.28 | 12.15 | **10.01** split column | 10 | 1 |
 | ULID text, 26 chars | 20.65 | 12.87 | 10.72 delta | 10 | 1 |
+| Relative ID, 16 bytes | 12.76 | 10.30 | 8.02 split columns | 7.5 | <span class="bad">99.9</span> |
+| Relative ID, sorted by ID | 11.49 | 8.95 | 8.13 byte stream split | 7.5 | 1 |
+| Relative ID text, 28 chars | 20.98 | 12.58 | 11.49 delta | 7.5 | <span class="bad">99.9</span> |
+| Relative ID text, sorted by ID | 17.92 | 11.08 | 9.67 delta | 7.5 | 1 |
 | UUIDv4, 16 bytes | 16.14 | 16.00 | 16.00 (nothing helps) | 15.25 | <span class="bad">100</span> |
-| Nano ID text, 21 chars | 23.36 | 16.51 | **15.89** delta | 15.75 | <span class="bad">100</span> |
-| UUIDv4 text, 36 chars | 35.76 | 20.55 | 19.31 delta | 15.25 | <span class="bad">100</span> |
+| Nano ID text, 21 chars | 23.36 | 16.51 | **15.89** delta | 15.75 | <span class="bad">99.9</span> |
+| UUIDv4 text, 36 chars | 35.76 | 20.55 | 19.32 delta | 15.25 | <span class="bad">99.9</span> |
 
 Source: [`bench/results/storage-parquet.txt`](https://github.com/rahulbsw/idgenkit/blob/main/bench/results/storage-parquet.txt), generated by `bench/doc_tables.py`.
 
@@ -212,6 +234,9 @@ The layouts are:
   bytes sit next to each other and compress away.
 - **Split column:** the ID stored as two columns, the 48-bit millisecond
   timestamp as a delta-encoded `INT64` and the remaining 10 bytes raw.
+- **Split columns (relative ID):** three columns, the 30-bit tag as a
+  dictionary-encoded `INT32`, the millisecond timestamp as a delta-encoded
+  `INT64` and the 50 random bits as 7 raw bytes.
 
 ### What the numbers show
 
@@ -249,6 +274,18 @@ and the pruning.
 Nano ID column spans nearly the whole value range, so min/max statistics never
 rule one out. Bloom filters, which Parquet also supports, are the tool for point
 lookups on those columns. We didn't measure them.
+
+**Relative IDs need sorting to be pruned.** In arrival order every row group
+holds IDs of nearly every key, and the tag is the top of the ID, so each row
+group's min/max range covers almost everything. A lookup reads 99.9 of 100 row
+groups, and a scan for all IDs of one key reads all 100. Sorted by ID, a lookup
+reads 1 and a key scan 1.1, since each key's IDs sit together. Split into three
+columns, arrival-order relative IDs take 8.02 bytes per ID, within 0.52 of the
+floor; the dictionary stores each of the 1,000 tags once. After sorting, byte
+stream split does slightly better (8.13 against 8.54 for the split columns),
+because the sort puts the tags in order but mixes up the timestamps. Text relative IDs
+compress well with delta encoding once sorted (9.67), since consecutive IDs
+share the tag as a prefix.
 
 **Can a new technique do better?** Only by putting fewer random bits into each
 ID, since the measured layouts are already at the floor for the bits there are.
@@ -316,6 +353,8 @@ Time-ordered keys are ideal for a single-node B-tree and harmful for databases
 that split data by key range (Spanner, CockroachDB, TiDB, HBase and Bigtable row
 keys): every new row goes to the same range, and that node becomes a hotspot.
 Use random keys (UUIDv4, Nano ID), or prefix the ordered ID with a hash bucket.
+A relative ID already has such a prefix: its tag spreads writes for different
+keys across ranges, though every write for one busy key still goes to one range.
 Hash-partitioned systems (Kafka topics, Cassandra, DynamoDB) aren't affected.
 
 ### JSON and JavaScript
@@ -326,14 +365,14 @@ strings already.
 
 ## How to store each type
 
-| Platform | UUID (v4, v7) | ULID | Snowflake | Nano ID |
-|---|---|---|---|---|
-| PostgreSQL | `uuid` | `uuid` via `ulid_to_uuid()`, or `text COLLATE "C"` | `bigint` | `text COLLATE "C"` |
-| MySQL | `BINARY(16)` via `UUID_TO_BIN()` | `BINARY(16)` via `ulid_to_bin()` | `BIGINT` | `CHAR(21)` with an `ascii_bin` collation |
-| Parquet | `FIXED_LEN_BYTE_ARRAY(16)`, `UUID` logical type | `FIXED_LEN_BYTE_ARRAY(16)` or `STRING` | `INT64` | `STRING` |
-| Iceberg | `uuid` | `fixed[16]` or `string` | `long` | `string` |
-| Spark, BigQuery | `STRING` or `BINARY`/`BYTES` (no UUID type) | `BINARY`/`BYTES` or `STRING` | `BIGINT` / `INT64` | `STRING` |
-| ClickHouse | `UUID` | `FixedString(16)` or `String` | `UInt64` | `String` |
+| Platform | UUID (v4, v7) | ULID | Relative ID | Snowflake | Nano ID |
+|---|---|---|---|---|---|
+| PostgreSQL | `uuid` | `uuid` via `ulid_to_uuid()`, or `text COLLATE "C"` | `text COLLATE "C"` | `bigint` | `text COLLATE "C"` |
+| MySQL | `BINARY(16)` via `UUID_TO_BIN()` | `BINARY(16)` via `ulid_to_bin()` | `CHAR(28)` with an `ascii_bin` collation | `BIGINT` | `CHAR(21)` with an `ascii_bin` collation |
+| Parquet | `FIXED_LEN_BYTE_ARRAY(16)`, `UUID` logical type | `FIXED_LEN_BYTE_ARRAY(16)` or `STRING` | `FIXED_LEN_BYTE_ARRAY(16)`, sorted by ID | `INT64` | `STRING` |
+| Iceberg | `uuid` | `fixed[16]` or `string` | `fixed[16]` with a sort order on the ID | `long` | `string` |
+| Spark, BigQuery | `STRING` or `BINARY`/`BYTES` (no UUID type) | `BINARY`/`BYTES` or `STRING` | `BINARY`/`BYTES` or `STRING` | `BIGINT` / `INT64` | `STRING` |
+| ClickHouse | `UUID` | `FixedString(16)` or `String` | `FixedString(16)` or `String` | `UInt64` | `String` |
 
 Prefer the binary forms for keys and convert to text only at the edges (APIs,
 logs, URLs). If a column must be text, use a byte-wise collation; locale-aware

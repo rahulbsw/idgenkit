@@ -5,10 +5,15 @@ format                          raw   zlib   lzma
 bigint sequence (baseline)      8.0    2.1    0.3
 snowflake (8 B)                 8.0    2.1    0.2
 uuid v4 (16 B)                 16.0   16.0   16.0
-uuid v7 (16 B)                 16.0   12.9   10.5
+uuid v7 (16 B)                 16.0   12.9   10.7
 ulid (16 B)                    16.0   13.0   10.9
 ulid monotonic (16 B)          16.0   13.0   10.9
 ulid text (26 chars)           26.0   13.4   11.3
+relid (16 B)                   16.0   10.9    8.6
+relid monotonic (16 B)         16.0   10.9    8.7
+relid sorted by id (16 B)      16.0   10.0    8.2
+relid text (28 chars)          28.0   12.6    8.8
+relid text sorted by id        28.0   11.2    8.8
 nanoid text (21 chars)         21.0   15.9   16.1
 uuid v4 text (36 chars)        36.0   20.4   17.8
 
@@ -21,5 +26,10 @@ uuid v7 (16 B)                 16.0   11.2    9.9
 ulid (16 B)                    16.0   12.1   10.4
 ulid monotonic (16 B)          16.0    1.9    0.4
 ulid text (26 chars)           26.0   12.4   10.9
+relid (16 B)                   16.0   10.0    8.4
+relid monotonic (16 B)         16.0    4.6    1.8
+relid sorted by id (16 B)      16.0    9.0    7.4
+relid text (28 chars)          28.0   11.3    8.6
+relid text sorted by id        28.0   10.2    7.6
 nanoid text (21 chars)         21.0   15.9   16.1
 uuid v4 text (36 chars)        36.0   20.4   17.8

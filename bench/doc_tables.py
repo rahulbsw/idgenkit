@@ -85,12 +85,18 @@ COMPRESSION_LABELS = {
     "ulid (16 B)": "ULID, 16 bytes",
     "ulid monotonic (16 B)": "ULID monotonic, 16 bytes",
     "ulid text (26 chars)": "ULID text, 26 chars",
+    "relid (16 B)": "Relative ID, 16 bytes",
+    "relid monotonic (16 B)": "Relative ID monotonic, 16 bytes",
+    "relid sorted by id (16 B)": "Relative ID sorted by ID, 16 bytes",
+    "relid text (28 chars)": "Relative ID text, 28 chars",
+    "relid text sorted by id": "Relative ID text sorted by ID",
     "uuid v4 (16 B)": "UUIDv4, 16 bytes",
     "nanoid text (21 chars)": "Nano ID text, 21 chars",
     "uuid v4 text (36 chars)": "UUIDv4 text, 36 chars",
 }
 
-# Floor = the format's random bits / 8: UUIDv7 74, ULID 80, UUIDv4 122, Nano ID 126.
+# Floor = the format's random bits / 8: UUIDv7 74, ULID 80, UUIDv4 122, Nano ID 126,
+# Relative ID 50 plus log2(1,000) bits for which of the benchmark's 1,000 keys it belongs to.
 PARQUET_LABELS = {
     "bigint sequence (baseline)": ("`bigint` sequence (baseline)", "0"),
     "snowflake": ("Snowflake `INT64`", "about 0"),
@@ -98,6 +104,10 @@ PARQUET_LABELS = {
     "uuid v7, rows shuffled": ("UUIDv7, rows shuffled", "9.25"),
     "ulid": ("ULID, 16 bytes", "10"),
     "ulid text": ("ULID text, 26 chars", "10"),
+    "relid": ("Relative ID, 16 bytes", "7.5"),
+    "relid, sorted by id": ("Relative ID, sorted by ID", "7.5"),
+    "relid text": ("Relative ID text, 28 chars", "7.5"),
+    "relid text, sorted by id": ("Relative ID text, sorted by ID", "7.5"),
     "uuid v4": ("UUIDv4, 16 bytes", "15.25"),
     "nanoid text": ("Nano ID text, 21 chars", "15.75"),
     "uuid v4 text": ("UUIDv4 text, 36 chars", "15.25"),
@@ -108,6 +118,7 @@ PARQUET_LAYOUTS = {
     "delta + zstd": "delta",
     "byte_stream_split + zstd": "byte stream split",
     "split: ms delta + rest zstd": "split column",
+    "split: tag dict + ms delta + rest zstd": "split columns",
 }
 NEAR_FLOOR_BYTES = 0.2
 BAD_COMPRESSED_BYTES = 15
